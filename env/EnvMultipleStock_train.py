@@ -1,12 +1,14 @@
 import numpy as np
 import pandas as pd
 from gym.utils import seeding
-import gym
+import gym # from openai
 from gym import spaces
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pickle
+
+# BCAP: SAME PARAMETERS ACROSS ALL ENVIRONMENTS. COULD PUT IN A COMMON FILE / OR IN CONFIG!
 
 # shares normalization factor
 # 100 shares per trade
@@ -19,13 +21,19 @@ STOCK_DIM = 30
 TRANSACTION_FEE_PERCENT = 0.001
 REWARD_SCALING = 1e-4
 
+# BCAP: see stable-baselines documentation on custom environments:
+# https://stable-baselines.readthedocs.io/en/master/guide/custom_env.html
+
 class StockEnvTrain(gym.Env):
     """A stock trading environment for OpenAI gym"""
+    # BCAP: stock trading env. that follows the gyme interface (class Env, see core.py on GitHub:
+    # https://github.com/openai/gym/blob/master/gym/core.py
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df,day = 0):
+    def __init__(self, df, day = 0, results_dir = None):
         #super(StockEnv, self).__init__()
         #money = 10 , scope = 1
+        self.results_dir = results_dir
         self.day = day
         self.df = df
 
@@ -94,14 +102,14 @@ class StockEnvTrain(gym.Env):
 
         if self.terminal:
             plt.plot(self.asset_memory,'r')
-            plt.savefig('results/account_value_train.png')
+            plt.savefig('{}/account_value_train.png'.format(self.results_dir))
             plt.close()
             end_total_asset = self.state[0]+ \
             sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
             
             #print("end_total_asset:{}".format(end_total_asset))
             df_total_value = pd.DataFrame(self.asset_memory)
-            df_total_value.to_csv('results/account_value_train.csv')
+            df_total_value.to_csv('{}/account_value_train.csv'.format(self.results_dir))
             #print("total_reward:{}".format(self.state[0]+sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):61]))- INITIAL_ACCOUNT_BALANCE ))
             #print("total_cost: ", self.cost)
             #print("total_trades: ", self.trades)

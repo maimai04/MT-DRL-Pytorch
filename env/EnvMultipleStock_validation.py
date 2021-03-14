@@ -8,27 +8,29 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pickle
 
+# BCAP: SAME PARAMETERS ACROSS ALL ENVIRONMENTS. COULD PUT IN A COMMON FIL / OR IN CONFIG!
+
 # shares normalization factor
 # 100 shares per trade
-HMAX_NORMALIZE = 100
+HMAX_NORMALIZE = 100 # BCAP: ?
 # initial amount of money we have in our account
 INITIAL_ACCOUNT_BALANCE=1000000
 # total number of stocks in our portfolio
-STOCK_DIM = 30
+STOCK_DIM = 30 # BCAP: does this mean total number of stocks or total number of unique stocks? because we have dow 30, so I wonder
 # transaction fee: 1/1000 reasonable percentage
-TRANSACTION_FEE_PERCENT = 0.001
-
-# turbulence index: 90-150 reasonable threshold
-#TURBULENCE_THRESHOLD = 140
-REWARD_SCALING = 1e-4
+TRANSACTION_FEE_PERCENT = 0.001 # BCAP: 0.1 bp
+# turbulence index: 90-150 reasonable threshold # BCAP: WHY?
+#TURBULENCE_THRESHOLD = 140 #BCAP: why did they set this first, then outcomment?
+REWARD_SCALING = 1e-4 # BCAP: ?
 
 class StockEnvValidation(gym.Env):
     """A stock trading environment for OpenAI gym"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, df, day = 0, turbulence_threshold=140, iteration=''):
+    def __init__(self, df, day = 0, turbulence_threshold=140, iteration='', results_dir=None):
         #super(StockEnv, self).__init__()
         #money = 10 , scope = 1
+        self.results_dir = results_dir
         self.day = day
         self.df = df
         # action_space normalization and shape is STOCK_DIM
@@ -116,10 +118,11 @@ class StockEnvValidation(gym.Env):
 
         if self.terminal:
             plt.plot(self.asset_memory,'r')
-            plt.savefig('results/account_value_validation_{}.png'.format(self.iteration))
+            # BCAP: added "dynamic" path
+            plt.savefig('{}/account_value_validation_{}.png'.format(self.results_dir, self.iteration))
             plt.close()
             df_total_value = pd.DataFrame(self.asset_memory)
-            df_total_value.to_csv('results/account_value_validation_{}.csv'.format(self.iteration))
+            df_total_value.to_csv('{}/account_value_validation_{}.csv'.format(self.results_dir, self.iteration))
             end_total_asset = self.state[0]+ \
             sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
             #print("previous_total_asset:{}".format(self.asset_memory[0]))           
