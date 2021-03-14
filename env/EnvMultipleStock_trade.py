@@ -8,6 +8,8 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import pickle
 
+# BCAP: SAME PARAMETERS ACROSS ALL ENVIRONMENTS. COULD PUT IN A COMMON FIL / OR IN CONFIG!
+
 # shares normalization factor
 # 100 shares per trade
 HMAX_NORMALIZE = 100
@@ -27,9 +29,10 @@ class StockEnvTrade(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, df,day = 0,turbulence_threshold=140
-                 ,initial=True, previous_state=[], model_name='', iteration=''):
+                 ,initial=True, previous_state=[], model_name='', iteration='', results_dir=None):
         #super(StockEnv, self).__init__()
         #money = 10 , scope = 1
+        self.results_dir = results_dir
         self.day = day
         self.df = df
         self.initial = initial
@@ -119,10 +122,10 @@ class StockEnvTrade(gym.Env):
 
         if self.terminal:
             plt.plot(self.asset_memory,'r')
-            plt.savefig('results/account_value_trade_{}_{}.png'.format(self.model_name, self.iteration))
+            plt.savefig('{}/account_value_trade_{}_{}.png'.format(self.results_dir, self.model_name, self.iteration))
             plt.close()
             df_total_value = pd.DataFrame(self.asset_memory)
-            df_total_value.to_csv('results/account_value_trade_{}_{}.csv'.format(self.model_name, self.iteration))
+            df_total_value.to_csv('{}/account_value_trade_{}_{}.csv'.format(self.results_dir, self.model_name, self.iteration))
             end_total_asset = self.state[0]+ \
             sum(np.array(self.state[1:(STOCK_DIM+1)])*np.array(self.state[(STOCK_DIM+1):(STOCK_DIM*2+1)]))
             print("previous_total_asset:{}".format(self.asset_memory[0]))           
@@ -139,7 +142,7 @@ class StockEnvTrade(gym.Env):
             print("Sharpe: ",sharpe)
             
             df_rewards = pd.DataFrame(self.rewards_memory)
-            df_rewards.to_csv('results/account_rewards_trade_{}_{}.csv'.format(self.model_name, self.iteration))
+            df_rewards.to_csv('{}/account_rewards_trade_{}_{}.csv'.format(self.results_dir, self.model_name, self.iteration))
             
             # print('total asset: {}'.format(self.state[0]+ sum(np.array(self.state[1:29])*np.array(self.state[29:]))))
             #with open('obs.pkl', 'wb') as f:  
