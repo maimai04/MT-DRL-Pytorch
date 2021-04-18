@@ -25,6 +25,7 @@ class settings:
     ### set random seeds;
     SEED_PPO = 223445
     SEED_ENV = 101882
+    SEEDS_LIST = [223445, 80923, 11112, 23, 5]
 
     # ---------------LEAVE---------------
     ### Set dates
@@ -33,6 +34,8 @@ class settings:
 
     STARTDATE_VALIDATION = 20151001
     ENDDATE_VALIDATION = 20200707
+
+    # trading starts on:     # 2016/01/01 is the date that real trading starts
 
     ### set windows
     # REBALANCE_WINDOW is the number of months to retrain the model
@@ -70,8 +73,8 @@ class crisis_settings:
     """
 
     # ---------------SET MANUALLY---------------
-    #CRISIS_MEASURE = None  # default
-    CRISIS_MEASURE = "turbulence"
+    CRISIS_MEASURE = None  # default
+    #CRISIS_MEASURE = "turbulence"
     # CRISIS_MEASURE = "volatility"
 
     # ---------------LEAVE---------------
@@ -94,35 +97,6 @@ class crisis_settings:
     else:
         print("ValueError: crisis measure selected unkNOWn and not None.")
 
-class paths:
-    # ---------------LEAVE---------------
-
-    # data paths
-    DATA_PATH = "data"
-    RAW_DATA_PATH = os.path.join(DATA_PATH, "raw")
-    PREPROCESSED_DATA_PATH = os.path.join(DATA_PATH, "preprocessed") # todo: was PREPROCESSED_RAW_DATA_PATH
-
-    # trained models and results path
-    TRAINED_MODELS_PATH = "trained_models"
-    RESULTS_PATH = "results"
-    # names of sub-directories within results folder (based on the memories we save in the env.)
-    SUBDIR_NAMES = {"cash_value": "cash_value",
-                    "portfolio_value": "portfolio_value",
-                    "rewards": "rewards",
-                    "policy_actions": "policy_actions",
-                    "exercised_actions": "exercised_actions",
-                    "transaction_cost": "transaction_cost",
-                    "number_asset_holdings": "number_asset_holdings",
-                    "sell_trades": "sell_trades",
-                    "buy_trades": "buy_trades",
-                    "crisis_measures": "crisis_measures",
-                    "crisis_thresholds": "crisis_thresholds",
-                    "state_memory": "state_memory"}
-
-    # data files
-    TESTING_DATA_FILE = "test.csv"  # TODO: WHERE IS THIS FILE? rm
-    RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv") # todo: was TRAINING_DATA_FILE
-    PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, "done_data.csv") # todo: was PREP_DATA_FILE
 
 class dataprep_settings:
     """
@@ -151,15 +125,27 @@ class dataprep_settings:
 
     ### PROVIDE NAMES OF ALL FEATURES / INDICATORS GIVEN DATASET COLUMN NAMES # todo
     TECH_INDICATORS = ["macd", "rsi_30", "cci_30", "dx_30"] # was FEATURES_LIST
-    RISK_INDICATORS = ["vola"]
+    RISK_INDICATORS = ["returns_volatility"]
     ESG_INDICATORS = ["ESG"]
     LSTM_INDICATORS = []
 
     ### CHOOSE WHICH COLUMNS YOU WANT TO USE IN YOUR FINAL, CLEAN DATASET
-    ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] + TECH_INDICATORS
+    #ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] # price only
+    #ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] + RISK_INDICATORS
+    #ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] + TECH_INDICATORS
+    ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] + TECH_INDICATORS + RISK_INDICATORS
+    #ALL_USED_COLUMNS = BASE_DF_COLS + ['adjcp'] + TECH_INDICATORS + ['volume'] + RISK_INDICATORS
+
 
     # list of all features to be used apart from (here: daily closing) price
-    FEATURES_LIST = ["macd", "rsi", "cci", "adx"] # todo
+    #FEATURES_LIST = []
+    #FEATURES_LIST = ["returns_volatility"]
+    #FEATURES_LIST = ["macd", "rsi", "cci", "adx"]
+    #FEATURES_LIST = ["macd", "rsi", "cci", "adx", "returns_volatility"]
+    FEATURES_LIST = ["macd", "rsi_30", "cci_30", "dx_30",  "returns_volatility"]
+    #FEATURES_LIST = ["macd", "rsi", "cci", "adx", "volume", "returns_volatility"]
+    #FEATURES_LIST = ["macd", "rsi_30", "cci_30", "dx_30", "volume", "returns_volatility"]
+
     # todo
 
     #PREPROCESSING_LEVEL = "prepLevel01"
@@ -178,7 +164,44 @@ class dataprep_settings:
 
     # ---------------LEAVE---------------
 
-    if FEATURES_LIST == ["macd", "rsi", "cci", "adx"]: # todo
+    if FEATURES_LIST == ["macd", "rsi", "cci", "adx"] or ["macd", "rsi_30", "cci_30", "dx_30"]: # todo
         FEATURES_MODE = "fm1"
-    if FEATURES_LIST == ["adjcp"]: # todo
+    if FEATURES_LIST == []: # todo
         FEATURES_MODE = "fm2"
+    if FEATURES_LIST == ["macd", "rsi_30", "cci_30", "dx_30", "returns_volatility"]:
+        FEATURES_MODE = "fm3"
+    else:
+        print("error: features list not found for features mode.")
+
+
+class paths:
+    # ---------------LEAVE---------------
+
+    # data paths
+    DATA_PATH = "data"
+    RAW_DATA_PATH = os.path.join(DATA_PATH, "raw")
+    PREPROCESSED_DATA_PATH = os.path.join(DATA_PATH, "preprocessed") # todo: was PREPROCESSED_RAW_DATA_PATH
+
+    # trained models and results path
+    TRAINED_MODELS_PATH = "trained_models"
+    RESULTS_PATH = "results"
+    # names of sub-directories within results folder (based on the memories we save in the env.)
+    SUBSUBDIR_NAMES = {"datadates": "datadates",
+                       "cash_value": "cash_value",
+                        "portfolio_value": "portfolio_value",
+                        "rewards": "rewards",
+                        "policy_actions": "policy_actions",
+                        "exercised_actions": "exercised_actions",
+                        "transaction_cost": "transaction_cost",
+                        "number_asset_holdings": "number_asset_holdings",
+                        "sell_trades": "sell_trades",
+                        "buy_trades": "buy_trades",
+                        "crisis_measures": "crisis_measures",
+                        "crisis_thresholds": "crisis_thresholds",
+                        "crisis_selloff_cease_trading": "crisis_selloff_cease_trading",
+                        "state_memory": "state_memory",
+                        "last_state": "last_state"}
+    # data files
+    TESTING_DATA_FILE = "test.csv"  # TODO: WHERE IS THIS FILE? rm
+    RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv") # todo: was TRAINING_DATA_FILE
+    PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, "done_data.csv") # todo: was PREP_DATA_FILE

@@ -3,7 +3,7 @@ import pandas as pd
 from stockstats import StockDataFrame
 from config.config import *
 from config.config import settings, crisis_settings, paths, env_params, dataprep_settings
-
+import logging
 
 ############################
 ##   SINGLE FUNCTIONS   ##
@@ -26,6 +26,9 @@ def load_dataset(*,
 
     # Note: the asterisk (*) enforces that all the following variables have to be specified as keyword argument, when being called
     # see also: https://treyhunner.com/2018/10/asterisks-in-python-what-they-are-and-how-to-use-them/
+
+    INPUT: df as csv, ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), ordered by ticker, then date
     """
     df = pd.read_csv(file_path, index_col=0)
 
@@ -61,6 +64,9 @@ def calculate_price_volume_WhartonData(df,
                               Do not pass an empty list, unless, you will add other features later in add_features(),
                               (Make sure the agent has some data to learn apart from date and ticker)
     @return: (df) pandas dataframe with calculated
+
+    INPUT: raw df as pd.DataFrame(), ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), with calculated price and volume, ordered by ticker, then date
     """
 
     data = df.copy()
@@ -122,6 +128,8 @@ def add_technical_indicator_with_StockStats(df,
 
     Note: this function takes a few seconds to run (laptop)
 
+    INPUT: df as pd.DataFrame(), with calculated price and volume, ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), with additional technical indicators for each asset, ordered by ticker, then date
     """
     from stockstats import StockDataFrame
 
@@ -145,7 +153,7 @@ def add_technical_indicator_with_StockStats(df,
 
             df[t_ind] = temp_df
     else:
-        print("No features specified to add.")
+        logging.info("add_technical_indicator_with_StockStats(): No features specified to add.")
 
     return df
 
@@ -154,8 +162,38 @@ def add_technical_indicator_with_otherFunc(df) -> pd.DataFrame:
     pass
 
 
-def add_other_features(df) -> pd.DataFrame:
-    pass
+def add_other_features(df,
+                       feature="returns_volatility",
+                       window_days=7,
+                       price_colum=dataprep_settings.MAIN_PRICE_COLUMN,
+                       asset_name_column=dataprep_settings.ASSET_NAME_COLUMN
+                       ) -> pd.DataFrame:
+    """
+    @param feature: price_volatility, returns_volatility
+
+    INPUT: df as pd.DataFrame(), with additional technical indicators for each asset, ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), with additional features for each asset, ordered by ticker, then date
+    """
+    unique_ticker = df[asset_name_column].unique()
+
+    if feature == "price_volatility":
+        temp_df = pd.DataFrame()
+        for i in range(len(unique_ticker)):
+            temp_ind = df[df.tic == unique_ticker[i]][price_colum].rolling(window_days, min_periods=1).std()
+            temp_ind = pd.DataFrame(temp_ind)
+            temp_df = temp_df.append(temp_ind, ignore_index=True)
+        df[feature] = temp_df
+    elif feature == "returns_volatility":
+        temp_df = pd.DataFrame()
+        for i in range(len(unique_ticker)):
+            temp_ind = df[df.tic == unique_ticker[i]][price_colum].pct_change().rolling(window_days, min_periods=1).std()
+            temp_ind = pd.DataFrame(temp_ind)
+            temp_df = temp_df.append(temp_ind, ignore_index=True)
+        df[feature] = temp_df
+    else:
+        logging.info("add_other_features(): No features specified to add.")
+
+    return df
 
 
 def add_ANN_features(df,
@@ -223,9 +261,9 @@ def add_crisis_measure(df,
         df = df.merge(crisis_index, on='datadate')
 
     elif crisis_measure is None:
-        print("settings: no crisis measure used.")
+        logging.info("add_crisis_measure(): settings: no crisis measure used.")
     else:
-        print("no valid crisis measure defined.")
+        logging.info("add_crisis_measure(): no valid crisis measure defined.")
 
     return df
 
@@ -265,6 +303,7 @@ def get_data_params(final_df: pd.DataFrame,  # todo: create support_functions an
     return [n_individual_assets, n_features, unique_trade_dates]
 
 
+
 def split_data_by_date(df,
                        start,
                        end,
@@ -275,6 +314,11 @@ def split_data_by_date(df,
     split the dataset into training or testing using date.
     Used later mainly for train / validation / test split of the time series.
 
+    INPUT:
+    OUTPUT: date subset df, sorted by date, then ticker, and the index column is not [0,1,2,3,4,...] anymore
+            but [0,0,0,0,...1,1,1,1,...,2,2,2,2,2...] etc. (datadate factorized, same index number for same datadate)
+            This dataset is used then in the environment. So when we use day=0 in the env, we get day 0 for each ticker,
+            hence multiple lines, not just one.
     @param df:
     @param start:
     @param end:
@@ -302,7 +346,7 @@ def split_data_by_date(df,
 
 # todo: was preprocess_data
 def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with load_dataset()
-        raw_data_file=paths.RAW_DATA_FILE,
+        raw_data_file=paths.RAW_DATA_FILE, # Note raw data file is ordered by ticker, then by date
         col_subset=dataprep_settings.RAW_DF_COLS_SUBSET,
         date_subset="datadate",
         date_subset_startdate=settings.STARTDATE_TRAIN,
@@ -326,7 +370,8 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
         # technical_indicators_list=["macd", "rsi_30", "cci_30", "dx_30"],
 
         # params for adding other features (e.g. volatility)
-        add_other_features_func_params={},
+        add_other_features_func_params={"feature": "returns_volatility",
+                                        "window_days": 7},
 
         # params for adding ANN-created features
         add_ANN_features_func_params={},
@@ -334,13 +379,13 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
         # params for add_crisis_measure_func
         add_crisis_measure_func_params={"crisis_measure": crisis_settings.CRISIS_MEASURE},
         # crisis_measure=crisis_settings.CRISIS_MEASURE,
-) -> pd.DataFrame:
+        ) -> pd.DataFrame:
     """
     Data preprocessing pipeline: based on specifications, call preprocessing functions defined in preprocessors.py
     in a certain order and return a pre-processed dataframe.
 
     Note: TRAINING_DATA_FILE (raw df) is ordered based on ticker, not based on data;
-    Example; raw df
+    Example; raw df, ordered by ticker, then by date
         1   A
         2   A
         3   A
@@ -358,53 +403,60 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
     # get data after a specified date (originally was after 2009)
     # df = df[df["datadate"] >= startdate] # integrate din load_dataset
     # calculate adjusted price, open, high and low, and trading volume for each day
+    logging.info("DATA PREPROCESSING PIPELINE:")
+    logging.info("----------------------------")
     if calculate_price_volume_func == "calculate_price_volume_WhartonData":
-        print("DataPrep: Calculating price / volume on data from WhartonDB.")
+        logging.info("DataPrep: Calculating price / volume on data from WhartonDB.")
         df = calculate_price_volume_WhartonData(df=df,
                                                 new_cols_subset=calculate_price_volume_func_params["new_cols_subset"],
                                                 target_subset=calculate_price_volume_func_params["target_subset"])
     elif calculate_price_volume_func == "calculate_price_volume_OtherData":
-        print("DataPrep: Calculating price / volume on alternative data (not WhartonDB).")
+        logging.info("DataPrep: Calculating price / volume on alternative data (not WhartonDB).")
         df = calculate_price_volume_OtherData(df=df, )  # todo
     else:
-        print("DataPrep: No function specified for calculating price / volume from raw data.")
+        logging.info("DataPrep: No function specified for calculating price / volume from raw data.")
 
     # add technical indicators using the stockstats package
     if add_technical_indicator_func == "add_technical_indicator_with_StockStats":
-        print("DataPrep: technical indicators used (using stockstats package).")
+        logging.info("DataPrep: technical indicators used (using stockstats package).")
         df = add_technical_indicator_with_StockStats(df=df,
                                                      technical_indicators_list=add_technical_indicator_func_params[
                                                          "technical_indicators_list"])
     elif add_technical_indicator_func == "add_technical_indicator_with_otherFunc":
-        print("DataPrep: technical indicators used (using other function).")
+        logging.info("DataPrep: technical indicators used (using other function).")
         df = add_technical_indicator_with_otherFunc(df=df,
                                                     )
     else:
-        print("DataPrep: No technical indicators used (because no function specified).")
+        logging.info("DataPrep: No technical indicators used (because no function specified).")
 
     # add additional features such as volatility etc.
     if add_other_features_func == "add_other_features":
-        print("DataPrep: Added additional/other features (such as vola etc).")
-        df = add_other_features(df=df, )  # todo
+        logging.info("DataPrep: Added additional/other features (such as vola etc).")
+        df = add_other_features(df=df,
+                                feature=add_other_features_func_params["feature"],
+                                window_days=add_other_features_func_params["window_days"],
+                                price_colum=dataprep_settings.MAIN_PRICE_COLUMN,
+                                asset_name_column=dataprep_settings.ASSET_NAME_COLUMN
+                                )
     else:
-        print("DataPrep: No additional features added (because no function specified).")
+        logging.info("DataPrep: No additional features added (because no function specified).")
 
     # add additional features using an artificial neural network (trained model)
     if add_ANN_features_func == "add_ANN_features":
-        print("DataPrep: Adding additional features created with ANN.")
+        logging.info("DataPrep: Adding additional features created with ANN.")
         df = add_ANN_features(df=df,
                               ann_model=None,
                               combine_with_df=True
                               )
     else:
-        print("DataPrep: No ANN-created features added.")
+        logging.info("DataPrep: No ANN-created features added.")
 
     if add_crisis_measure_func == "add_crisis_measure":
-        print("DataPrep: crisis measure function called.")
+        logging.info("DataPrep: crisis measure function called.")
         df = add_crisis_measure(df=df,
                                 crisis_measure=add_crisis_measure_func_params["crisis_measure"])
     else:
-        print("DataPrep: no crisis measure calculated.")
+        logging.info("DataPrep: no crisis measure calculated.")
     df = df.sort_values(['datadate', 'tic']).reset_index(drop=True)
     # fill the missing values at the beginning
     df.fillna(method='bfill',
@@ -438,8 +490,10 @@ def get_crisis_threshold(df,
     @return:
     """
     data = df.copy()
+    logging.info("GET CRISIS THRESHOLD:")
+    logging.info("---------------------")
     if mode == "insample":
-        print(f"-get_crisis_threshold (insample), mode: {mode}, crisis measure: {crisis_measure}.")
+        logging.info(f"-get_crisis_threshold (insample), mode: {mode}, crisis measure: {crisis_measure}.")
         if crisis_measure == "turbulence":
             """
             CALCULATE INSAMPLE TURBULENCE THRESHOLD BASED ON THE STARTING TRAINING DATA
@@ -453,20 +507,20 @@ def get_crisis_threshold(df,
                                                              cutoff_Xpercentile)
             # returns a float; the insample turbulence threshold at 90th percentile
             # with default data: df[(df.datadate<20151000) & (df.datadate>=20090000)], gives 96.08
-            print("-insample turbulence threshold: {}".format(insample_data_turbulence_threshold))
+            logging.info("-insample turbulence threshold: {}".format(insample_data_turbulence_threshold))
             to_return = [insample_data_turbulence_threshold, insample_data_subset]
 
         elif crisis_measure is None:
-            print("-no crisis measure used (a).")
+            logging.info("-no crisis measure used (a).")
             to_return = [0, None]
         else:
-            print("-ValueError: specified crisis measure does not exist (a).")
+            logging.info("-ValueError: specified crisis measure does not exist (a).")
             to_return = [None, None]
 
     elif mode == "newdata":
-        print(f"-get_crisis_threshold mode {mode}, crisis measure {crisis_measure}.")
+        logging.info(f"-get_crisis_threshold mode {mode}, crisis measure {crisis_measure}.")
         if crisis_measure == "turbulence":
-            # print("crisis measure used: ", crisis_settings.CRISIS_MEASURE )
+            # logging.info("crisis measure used: ", crisis_settings.CRISIS_MEASURE )
             current_turbulence = data[(data.datadate >= startdate) & (data.datadate <= enddate)]
             current_turbulence = current_turbulence.drop_duplicates(subset=[date_colname])
             current_turbulence_mean = np.mean(current_turbulence[crisis_measure_colname].values)
@@ -480,26 +534,26 @@ def get_crisis_threshold(df,
                 # therefore we set the 90% quantile of insample turbulence data as the turbulence threshold
                 # meaning the current turbulence can't exceed the 90% quantile of insample turbulence data
                 turbulence_threshold = insample_data_turbulence_threshold
-                print("-current turbulence index mean used: {}".format(turbulence_threshold))
+                logging.info("-current turbulence index mean used: {}".format(turbulence_threshold))
                 to_return = [turbulence_threshold, None]
             else:
                 # if the mean of the historical data is less than the 90% quantile of insample turbulence data
                 # then we tune up the turbulence_threshold, meaning we lower the risk
                 turbulence_threshold = np.quantile(insample_data_subset[crisis_measure_colname].values, 1)
-                print("-90th percentile of insample turbulence used: {} ", turbulence_threshold)
+                logging.info("-90th percentile of insample turbulence used: {} ", turbulence_threshold)
                 to_return = [turbulence_threshold, None]
                 # todo: why???
 
         elif crisis_measure is None:
-            print("-no crisis measure used (b).")
+            logging.info("-no crisis measure used (b).")
             turbulence_threshold = 0
             to_return = [turbulence_threshold, None]
         else:
-            print("-ValueError: specified crisis measure does not exist (b).")
+            logging.info("-ValueError: specified crisis measure does not exist (b).")
             turbulence_threshold = 0
             to_return = [None, None]
     else:
-        print("-unknown mode specification in get_crisis_threshold().\nMust be 'insample' or 'new'.")
+        logging.info("-unknown mode specification in get_crisis_threshold().\nMust be 'insample' or 'new'.")
         turbulence_threshold = 0
         to_return = [None, None]
 

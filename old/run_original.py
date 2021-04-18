@@ -22,7 +22,7 @@ def run_model() -> None:
     """Train the model."""
 
     # read and preprocess data
-    preprocessed_path = "data/preprocessed/done_data.csv"
+    preprocessed_path = "../data/preprocessed/done_data.csv"
     if os.path.exists(preprocessed_path):
         data = pd.read_csv(preprocessed_path, index_col=0) # index_col=0 prevents an index col like "Unnamed: 0" to be created
     else:

@@ -7,7 +7,7 @@ This ensemble strategy is reimplemented in a Jupiter Notebook at [FinRL](https:/
 ## Abstract
 Stock trading strategies play a critical role in investment. However, it is challenging to design a profitable strategy in a complex and dynamic stock market. In this paper, we propose a deep ensemble reinforcement learning scheme that automatically learns a stock trading strategy by maximizing investment return. We train a deep reinforcement learning agent and obtain an ensemble trading strategy using the three actor-critic based algorithms: Proximal Policy Optimization (PPO), Advantage Actor Critic (A2C), and Deep Deterministic Policy Gradient (DDPG). The ensemble strategy inherits and integrates the best features of the three algorithms, thereby robustly adjusting to different market conditions. In order to avoid the large memory consumption in training networks with continuous action space, we employ a load-on-demand approach for processing very large data. We test our algorithms on the 30 Dow Jones stocks which have adequate liquidity. The performance of the trading agent with different reinforcement learning algorithms is evaluated and compared with both the Dow Jones Industrial Average index and the traditional min-variance portfolio allocation strategy. The proposed deep ensemble scheme is shown to outperform the three individual algorithms and the two baselines in terms of the risk-adjusted return measured by the Sharpe ratio.
 
-<img src=figs/stock_trading.png width="600">
+<img src=../figs/stock_trading.png width="600">
 
 ## Reference
 Hongyang Yang, Xiao-Yang Liu, Shan Zhong, and Anwar Walid. 2020. Deep Reinforcement Learning for Automated Stock Trading: An Ensemble Strategy. In ICAIF ’20: ACM International Conference on AI in Finance, Oct. 15–16, 2020, Manhattan, NY. ACM, New York, NY, USA.
@@ -100,7 +100,7 @@ python run_DRL.py
 
 Use Quantopian's [pyfolio package](https://github.com/quantopian/pyfolio) to do the backtesting.
 
-[Backtesting script](backtesting.ipynb)
+[Backtesting script](../analysis/backtesting/backtesting.ipynb)
 
 ## Status
 
@@ -125,4 +125,4 @@ Our purpose is to create a highly robust trading strategy. So we use an ensemble
 * __Step 3__. After validation, we only use the best model which has the highest Sharpe ratio to predict and trade for the next quarter.
 
 ## Performance
-<img src=figs/performance.png>
+<img src=../figs/performance.png>
