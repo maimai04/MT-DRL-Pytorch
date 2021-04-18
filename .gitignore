@@ -1,6 +1,6 @@
 # Custom config
-results/
-trained_models/
+/trained_models/
+/results/
 
 # remove DS_Store
 **/.DS_Store
@@ -108,13 +108,11 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Environments
-.env
+# virtual env
 .venv
 venv/
-ENV/
-env.bak/
 venv.bak/
+/finrlpaperv4/
 
 # Spyder project settings
 .spyderproject
@@ -133,5 +131,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-# virtual env
-/finrlpaperv4/
+
