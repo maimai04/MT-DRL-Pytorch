@@ -102,7 +102,7 @@ if __name__ == "__main__":
         run_count += 1
         settings.SEED_PPO = seed
         logging.info("###########################################################")
-        logging.info(f"### RUN {run_count} --- AGENT SEED: {settings.SEED_PPO}.###")
+        logging.info(f"### RUN {str(run_count)} --- AGENT SEED: {str(settings.SEED_PPO)}.###")
         logging.info("###########################################################")
 
         #### SETUP

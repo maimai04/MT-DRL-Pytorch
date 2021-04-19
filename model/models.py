@@ -1,17 +1,16 @@
 # common library
 import time
 import logging
-
 # RL models from stable-baselines
-from stable_baselines import PPO2
-from stable_baselines import A2C
-from stable_baselines import DDPG
+from stable_baselines3 import PPO # PPO2
+from stable_baselines3 import A2C
+from stable_baselines3 import DDPG
 
-from stable_baselines.ddpg.policies import DDPGPolicy
-from stable_baselines.common.policies import MlpPolicy, MlpLstmPolicy, MlpLnLstmPolicy
-from stable_baselines.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise, AdaptiveParamNoiseSpec
-from stable_baselines.common.vec_env import DummyVecEnv
-from stable_baselines.gail import generate_expert_traj, ExpertDataset  # TODO: check if they did this somewhere (?)
+#from stable_baselines3.ddpg.policies import DDPGPolicy
+#from stable_baselines3.ppo.policies import MlpPolicy #, MlpLstmPolicy, MlpLnLstmPolicy
+from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise#, AdaptiveParamNoiseSpec
+from stable_baselines3.common.vec_env import DummyVecEnv
+#from stable_baselines3.gail import generate_expert_traj, ExpertDataset  # TODO: check if they did this somewhere (?)
 
 from config.config import paths, crisis_settings, settings, env_params, ppo_params, dataprep_settings
 from preprocessing.preprocessors import *
@@ -84,12 +83,13 @@ def train_PPO(env_train, save_name, trained_dir, timesteps=50000):
     # Mlp = Multy-Layer-Perceptron
     # see stable-baselines doc; common
     # TODO: understand all params, also those set by default
-    model = PPO2('MlpPolicy',
+    model = PPO('MlpPolicy', # PPO2
                  env_train,
                  ent_coef=0.005,
-                 nminibatches=8,
+                 #nminibatches=8,
                  seed=settings.SEED_PPO,
-                 n_cpu_tf_sess=1)
+                 #n_cpu_tf_sess=1
+                 )
     # model = PPO2('MlpPolicy', env_train, ent_coef = 0.005)
     model.learn(total_timesteps=timesteps)
     end_ppo = time.time()
