@@ -109,10 +109,10 @@ celerybeat.pid
 *.sage.py
 
 # virtual env
-.venv
-venv/
-venv.bak/
-/finrlpaperv4/
+#.venv
+#venv/
+#venv.bak/
+#/finrlpaperv4/
 
 # Spyder project settings
 .spyderproject

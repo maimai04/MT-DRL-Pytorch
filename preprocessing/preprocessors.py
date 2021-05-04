@@ -270,7 +270,7 @@ def add_crisis_measure(df,
 
 def get_data_params(final_df: pd.DataFrame,  # todo: create support_functions and move there
                     base_cols=dataprep_settings.BASE_DF_COLS,
-                    feature_cols=dataprep_settings.ALL_USED_COLUMNS,
+                    feature_cols=dataprep_settings.FEATURES_LIST,
                     asset_name_column="tic",
                     date_column="datadate",
                     startdate_validation=settings.STARTDATE_VALIDATION,
@@ -291,7 +291,7 @@ def get_data_params(final_df: pd.DataFrame,  # todo: create support_functions an
     """
     df = final_df.copy()
     n_individual_assets = len(df[asset_name_column].unique())
-    n_features = len(feature_cols) - len(base_cols)
+    n_features = len(feature_cols)
 
     # 2015/10/01 is the date that validation starts
     # 2016/01/01 is the date that real trading starts
@@ -301,8 +301,6 @@ def get_data_params(final_df: pd.DataFrame,  # todo: create support_functions an
     # TODO: IS THIS TRUE ? (DATE = ENDDATE VALIDATION? OR ENDDATE TRADING?)
 
     return [n_individual_assets, n_features, unique_trade_dates]
-
-
 
 def split_data_by_date(df,
                        start,
@@ -314,7 +312,7 @@ def split_data_by_date(df,
     split the dataset into training or testing using date.
     Used later mainly for train / validation / test split of the time series.
 
-    INPUT:
+    INPUT: date subset df, sorted by date, then ticker,
     OUTPUT: date subset df, sorted by date, then ticker, and the index column is not [0,1,2,3,4,...] anymore
             but [0,0,0,0,...1,1,1,1,...,2,2,2,2,2...] etc. (datadate factorized, same index number for same datadate)
             This dataset is used then in the environment. So when we use day=0 in the env, we get day 0 for each ticker,
@@ -329,13 +327,13 @@ def split_data_by_date(df,
     # sorting the dataframe based on date, then based on ticker (company)
     # ignore_index=True ensures the new index will be re-labeled again in a sorted manner (1,2,3,...),
     # because by sorting the data set by datadate and tic, the initial index will not be sorted anymore
-    data = data.sort_values([date_column, asset_name_column])  # , ignore_index=True) # todo: not really needed, since index overwritten later anyways
+    #data = data.sort_values([date_column, asset_name_column])  # , ignore_index=True) # todo: not really needed, since index overwritten later anyways
     # data  = data[final_columns]
     # factorize the index of the dataframe, based on datadate
     # for the same datadate, the index will be the same, starting at 0 for the first date in the dataframe
     # .factorize returns a tuple of two lists; new index values, corresponding datadate values.
     # we only need the index values, hence the [0]
-    data.index = data[date_column].factorize()[0]
+    #data.index = data[date_column].factorize()[0]
 
     return data
 
