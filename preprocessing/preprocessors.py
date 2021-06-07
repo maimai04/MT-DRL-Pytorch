@@ -2,12 +2,23 @@ import numpy as np
 import pandas as pd
 from stockstats import StockDataFrame
 from config.config import *
-from config.config import settings, crisis_settings, paths, env_params, dataprep_settings
+from config.config import settings, crisis_settings, paths, dataprep_settings
 import logging
+import wrds
 
 ############################
 ##   SINGLE FUNCTIONS   ##
 ############################
+
+def fetch_remote_dataset(database: str = dataprep_settings.DATABASE
+                         ) -> None:
+    if database == "WhartonDB":
+        db = wrds.Connection()
+        libraries = db.list_libraries()
+
+    pass
+
+
 
 def load_dataset(*,
                  file_path,
@@ -163,7 +174,7 @@ def add_technical_indicator_with_otherFunc(df) -> pd.DataFrame:
 
 
 def add_other_features(df,
-                       feature="returns_volatility",
+                       features=["returns_volatility"],
                        window_days=7,
                        price_colum=dataprep_settings.MAIN_PRICE_COLUMN,
                        asset_name_column=dataprep_settings.ASSET_NAME_COLUMN
@@ -176,23 +187,37 @@ def add_other_features(df,
     """
     unique_ticker = df[asset_name_column].unique()
 
-    if feature == "price_volatility":
+    if "price_volatility" in features:
         temp_df = pd.DataFrame()
         for i in range(len(unique_ticker)):
             temp_ind = df[df.tic == unique_ticker[i]][price_colum].rolling(window_days, min_periods=1).std()
             temp_ind = pd.DataFrame(temp_ind)
             temp_df = temp_df.append(temp_ind, ignore_index=True)
-        df[feature] = temp_df
-    elif feature == "returns_volatility":
+        df["price_volatility"] = temp_df
+    if "returns_volatility" in features:
         temp_df = pd.DataFrame()
         for i in range(len(unique_ticker)):
             temp_ind = df[df.tic == unique_ticker[i]][price_colum].pct_change().rolling(window_days, min_periods=1).std()
             temp_ind = pd.DataFrame(temp_ind)
             temp_df = temp_df.append(temp_ind, ignore_index=True)
-        df[feature] = temp_df
+        df["returns_volatility"] = temp_df
+    if "return_daily" in features:
+        temp_df = pd.DataFrame()
+        for i in range(len(unique_ticker)):
+            temp_ind = df[df.tic == unique_ticker[i]][price_colum].pct_change()
+            temp_ind = pd.DataFrame(temp_ind)
+            temp_df = temp_df.append(temp_ind, ignore_index=True)
+        df["return_daily"] = temp_df
+    if "log_return_daily" in features:
+        temp_df = pd.DataFrame()
+        for i in range(len(unique_ticker)):
+            temp_ind = np.log(df[df.tic == unique_ticker[i]][price_colum]) - \
+                       np.log(df[df.tic == unique_ticker[i]][price_colum].shift(1))
+            temp_ind = pd.DataFrame(temp_ind)
+            temp_df = temp_df.append(temp_ind, ignore_index=True)
+        df["log_return_daily"] = temp_df
     else:
         logging.info("add_other_features(): No features specified to add.")
-
     return df
 
 
@@ -368,7 +393,7 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
         # technical_indicators_list=["macd", "rsi_30", "cci_30", "dx_30"],
 
         # params for adding other features (e.g. volatility)
-        add_other_features_func_params={"feature": "returns_volatility",
+        add_other_features_func_params={"feature": ["returns_volatility", "log_return_daily"],
                                         "window_days": 7},
 
         # params for adding ANN-created features
@@ -431,7 +456,7 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
     if add_other_features_func == "add_other_features":
         logging.info("DataPrep: Added additional/other features (such as vola etc).")
         df = add_other_features(df=df,
-                                feature=add_other_features_func_params["feature"],
+                                features=add_other_features_func_params["feature"],
                                 window_days=add_other_features_func_params["window_days"],
                                 price_colum=dataprep_settings.MAIN_PRICE_COLUMN,
                                 asset_name_column=dataprep_settings.ASSET_NAME_COLUMN
@@ -444,8 +469,7 @@ def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with 
         logging.info("DataPrep: Adding additional features created with ANN.")
         df = add_ANN_features(df=df,
                               ann_model=None,
-                              combine_with_df=True
-                              )
+                              combine_with_df=True)
     else:
         logging.info("DataPrep: No ANN-created features added.")
 

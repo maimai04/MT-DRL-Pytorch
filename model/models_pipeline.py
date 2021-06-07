@@ -311,6 +311,9 @@ def run_model2(df,
     #last_validation_state = []  # Generated with DRL_trading() at the bottom of this function
     last_trade_state = []  # Generated with DRL_trading() at the bottom of this function
     sharpe_list = []  # list of Sharpe Ratios for the ppo agent model
+    last_asset_price_train = None
+    last_asset_price_trade = None
+
 
     if crisis_settings.CRISIS_MEASURE is not None:
         insample_data_crisis_threshold, insample_data_subset = get_crisis_threshold(df=df,
@@ -379,6 +382,7 @@ def run_model2(df,
         else:
             initial = False
         logging.warning("--------INITIALS")
+        logging.warning(f"RUN_MODE {settings.RUN_MODE}")
         logging.warning(f"episode {current_episode_number}")
         logging.warning(f"train_beginning {train_beginning}")
         logging.warning(f"train_ending {train_ending}")
@@ -429,32 +433,16 @@ def run_model2(df,
         train_data = df[(df.index >= train_beginning) & (df.index <= train_ending)]
         if train_ending not in df.index:
             break
-        #train_data = split_data_by_date(df=df,
-        #                                start=train_beginning,
-        #                                end=train_ending,
-        #                                date_column=dataprep_settings.DATE_COLUMN,
-        #                                asset_name_column=dataprep_settings.ASSET_NAME_COLUMN)
         # get validation data
         validation_data = df[(df.index >= validation_beginning) & (df.index <= validation_ending)]
         if validation_ending not in df.index:
             break
-        #validation_data = split_data_by_date(df=df, start=validation_beginning,
-        #                                     end=validation_ending,
-        #                                     date_column=dataprep_settings.DATE_COLUMN,
-        #                                     asset_name_column=dataprep_settings.ASSET_NAME_COLUMN)
         # get trade data (=test data)
         trade_data = df[(df.index >= trading_beginning) & (df.index <= trading_ending)]
         if trading_beginning in df.index and trading_ending not in df.index:
             trading_ending = df.index[-1]
             last_episode = True
-        #trade_data = split_data_by_date(df=df,
-        #                                start=trading_beginning,
-        #                                end=trading_ending,
-        #                                date_column=dataprep_settings.DATE_COLUMN,
-        #                                asset_name_column=dataprep_settings.ASSET_NAME_COLUMN)
         logging.warning("train, validation, test split on data complete.")
-        #logging.warning("train data:")
-        #logging.warning(train_data)
         ############## Data Setup ends ##############
 
         ############## Environment Setup starts ##############
@@ -476,14 +464,17 @@ def run_model2(df,
                                                             shape_observation_space=shape_observation_space,
                                                             initial=initial,
                                                             previous_state=last_train_state,
+                                                            previous_asset_price=last_asset_price_train,
                                                             price_colname=dataprep_settings.MAIN_PRICE_COLUMN,
                                                             results_dir=results_dir,
                                                             reset_counter=0)])
+
         env_train.seed(settings.SEED_AGENT)
         env_train.action_space.seed(settings.SEED_AGENT)
         # todo: check seeding
         # https://harald.co/2019/07/30/reproducibility-issues-using-openai-gym/
 
+        #train_data.to_csv(f"train_data{current_episode_number}.csv") # todo: rm
         logging.warning("created instance env_train.")
 
         # initialize validation environment
@@ -492,7 +483,7 @@ def run_model2(df,
                                                           day=validation_beginning,
                                                           iteration=current_episode_number,  # only used for logging.infoing
                                                           model_name=settings.STRATEGY_MODE,
-                                                          # only used for logging.infoing
+                                                          # only used for logging.info
                                                           mode="validation",
                                                           crisis_measure=crisis_settings.CRISIS_MEASURE,
                                                           crisis_threshold=crisis_threshold,
@@ -502,8 +493,9 @@ def run_model2(df,
                                                           reward_scaling=env_params.REWARD_SCALING,
                                                           assets_dim=stock_dim,
                                                           shape_observation_space=shape_observation_space,
-                                                          initial=True,
+                                                          initial=True, # for validation, we always have an "initial state"
                                                           previous_state=[],
+                                                          previous_asset_price=None,
                                                           price_colname=dataprep_settings.MAIN_PRICE_COLUMN,
                                                           results_dir=results_dir,
                                                           reset_counter=0)])
@@ -531,11 +523,15 @@ def run_model2(df,
                                                             crisis_threshold=crisis_threshold,
                                                             initial=initial,
                                                             previous_state=last_trade_state,
+                                                            previous_asset_price=last_asset_price_trade,
                                                             model_name=settings.STRATEGY_MODE,
                                                             iteration=current_episode_number,
                                                             price_colname=dataprep_settings.MAIN_PRICE_COLUMN,
                                                             results_dir=results_dir,
                                                             reset_counter=0)])
+        last_asset_price_trade = trade_data[dataprep_settings.MAIN_PRICE_COLUMN][
+            trade_data.index == trade_data.index[-1]].values.tolist()
+
         env_trade.seed(settings.SEED_AGENT)
         env_trade.action_space.seed(settings.SEED_AGENT)
         # reset environment
@@ -547,7 +543,7 @@ def run_model2(df,
         logging.warning(f"##### TRAINING")
         logging.warning(f"---{settings.STRATEGY_MODE.upper()} training from: {train_beginning} to {train_ending}, "
                         f"(i={current_episode_number}).")
-        model_agent, last_train_state, trained_model_save_path = \
+        model_agent, last_train_state, last_asset_price_train, trained_model_save_path = \
             DRL_train(env_train=env_train,
                       agent_name=settings.STRATEGY_MODE,
                       trained_dir=trained_dir,
@@ -557,6 +553,9 @@ def run_model2(df,
                       iteration=current_episode_number,
                       load_trained_model=load_trained_model,
                       trained_model_save_path=trained_model_save_path)
+        #if current_episode_number <= 5:
+        #    print("last asset price train 3", last_asset_price_train[:3]) # given by train data
+        #    print("lat 3: ", lat[:3]) # given back by render of env
         # trained model is saved in DRL_trading, then used in validation
         ############## Training ends ##############
 
@@ -586,7 +585,7 @@ def run_model2(df,
         logging.warning(f"##### TRADING (TESTING)")
         logging.warning(f"---{settings.STRATEGY_MODE.upper()} Trading from: "
                         f"{trading_beginning} to {trading_ending}, (i={current_episode_number}).======")
-        last_trade_state = DRL_predict(trained_model=model_agent,
+        last_trade_state, lattrade = DRL_predict(trained_model=model_agent,
                                              test_data=trade_data,
                                              test_env=env_trade,
                                              test_obs=obs_trade,
@@ -595,16 +594,27 @@ def run_model2(df,
                                              model_name=settings.STRATEGY_MODE,
                                              results_dir=results_dir)
         ############## Trading ends ##############
+        #if current_episode_number <= 3: # this yields the same prices => that is how it should be
+        #    print("last asset price trade 3", last_asset_price_trade[:3])
+         #   print("lattrade 3 ", lattrade[:3])
 
-        if last_episode == True:
+        if last_episode:
             break
+
+        if settings.RUN_MODE == "ext":
+            # train_beginning is not updated, stays the same as given in config.py
+            # hence training period gets longer and longer
+            pass
+        elif settings.RUN_MODE == "st":
+            train_beginning = train_ending
         # update dates for next episode
-        train_beginning = train_ending
-        train_ending = train_beginning + settings.TRAINING_WINDOW
+        train_ending = train_ending + settings.TRAINING_WINDOW
         validation_beginning = train_ending
         validation_ending = validation_beginning + settings.VALIDATION_WINDOW
         trading_beginning = validation_ending
         trading_ending = trading_beginning + settings.TRADING_WINDOW
+
+
         # increase current episode number
         current_episode_number += 1
         #
@@ -612,17 +622,17 @@ def run_model2(df,
         # print reset counts:
         logging.warning(f"---env resets in episode {current_episode_number}---")
         logging.warning("train: ")
-        _, _, reset_counts, final_state_counter, _ = env_train.render()
+        _, _, _, reset_counts, final_state_counter, _ = env_train.render()
         logging.warning(f"env resets: {reset_counts}")
         logging.warning(f"env final_state_counter: {final_state_counter}")
         logging.warning(f"train data: {train_beginning}:{train_ending}")
         logging.warning("validation: ")
-        _, _, reset_counts, final_state_counter, _ = env_val.render()
+        _, _, _, reset_counts, final_state_counter, _ = env_val.render()
         logging.warning(f"validation env resets: {reset_counts}")
         logging.warning(f"env final_state_counter: {final_state_counter}")
         logging.warning(f"validation data: {validation_beginning}:{validation_ending}")
         logging.warning("trade: ")
-        _, _, reset_counts, final_state_counter, _ = env_trade.render()
+        _, _, _, reset_counts, final_state_counter, _ = env_trade.render()
         logging.warning(f"trade env resets: {reset_counts}")
         logging.warning(f"env final_state_counter: {final_state_counter}")
         logging.warning(f"trade data: {trading_beginning}:{trading_ending}\n")

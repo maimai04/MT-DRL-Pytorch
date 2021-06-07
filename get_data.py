@@ -1,5 +1,9 @@
 import logging
+from preprocessing.preprocessors import *
+from config.config import *
+from config.config import settings, crisis_settings, paths, env_params, dataprep_settings
 from setup_functions import *
+#from model.models import *
 from model.models_pipeline import *
 import os
 """
@@ -18,19 +22,13 @@ additional changes from BCAP:
 
 if __name__ == "__main__":
 
-    #### SETUP DIRECTORIES AND LOGGINGS
-    ####-------------------------------
-    # create directories to save results and trained models for each seed for this whole run
-    # these directories are created here because they use the current timestamp (settings.NOW) defined in config.py
     results_dir, trained_dir = create_dirs(mode="run_dir")
-
-    # create saving path and directory for loggings
     logsave_path = os.path.join(results_dir, "_LOGGINGS")
     os.makedirs(logsave_path)
 
-    # write all parameters from config.py file into the config_log.txt file in folder _LOGGING
+    # call function to write all configurations / related parameters into the config_log.txt file in folder _LOGGING
     # so later this file can be consulted to uniquely identify each run and its configurations
-    config_logging_to_txt(results_dir, trained_dir, logsave_path=logsave_path)
+    config_logging_to_txt(results_dir, trained_dir, seeds_list=settings.SEEDS_LIST, logsave_path=logsave_path)
     logging.basicConfig(filename=os.path.join(logsave_path, "run_log"),
                         filemode='a',
                         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
@@ -43,10 +41,19 @@ if __name__ == "__main__":
     #### LOAD / LOAD & PREPROCESS DATA
     ####-------------------------------
     # call function to get the preprocessed data / get the raw data and preprocess it, depending on params in config.py
-    data = data_handling(
+    data = data_handling(  # simplify, make more readable and move mostly into config file
+        preprocess_anew=dataprep_settings.PREPROCESS_ANEW,
+        preprocessed_data_file=paths.PREPROCESSED_DATA_FILE,  # paths.PREPROCESSED_DATA_FILE,
+        save_path=paths.PREPROCESSED_DATA_PATH,
+        # BASE PARAMS FOR LOADING THE RAW DATA SET for preprocessing pipeline - with load_dataset()
+        raw_data_file=paths.RAW_DATA_FILE,
+        col_subset=dataprep_settings.RAW_DF_COLS_SUBSET,
+        date_subset="datadate",
+        date_subset_startdate=settings.STARTDATE_TRAIN,
         # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED in preprocessing pipeline
         calculate_price_volume_func="calculate_price_volume_WhartonData",
         add_technical_indicator_func="add_technical_indicator_with_StockStats",
+        # add_other_features_func=None,  # "add_other_features"
         add_other_features_func="add_other_features",
         add_ANN_features_func=None,
         add_crisis_measure_func="add_crisis_measure",
@@ -54,18 +61,10 @@ if __name__ == "__main__":
         calculate_price_volume_func_params={"new_cols_subset": dataprep_settings.NEW_COLS_SUBSET,
                                             "target_subset": None},
         add_technical_indicator_func_params={"technical_indicators_list": dataprep_settings.TECH_INDICATORS},
-        add_other_features_func_params={"feature": ["returns_volatility", "log_return_daily"],
+        add_other_features_func_params={"feature": "returns_volatility",
                                         "window_days": 7},
         add_ANN_features_func_params={},
         add_crisis_measure_func_params={"crisis_measure": crisis_settings.CRISIS_MEASURE},
-        # ----- LEAVE -----
-        preprocess_anew=dataprep_settings.PREPROCESS_ANEW,
-        preprocessed_data_file=paths.PREPROCESSED_DATA_FILE,
-        save_path=paths.PREPROCESSED_DATA_PATH,
-        raw_data_file=paths.RAW_DATA_FILE,
-        col_subset=dataprep_settings.RAW_DF_COLS_SUBSET,
-        date_subset=dataprep_settings.DATE_COLUMN,
-        date_subset_startdate=settings.STARTDATE_TRAIN,
     )
 
     # SETUP

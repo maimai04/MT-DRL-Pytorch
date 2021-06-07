@@ -1,41 +1,43 @@
-import pandas as pd
-import numpy as np
-import time
-from stable_baselines3.common.vec_env import DummyVecEnv
-import logging
-from preprocessing.preprocessors import *
-# config
-from config.config import *
-from config.config import settings, crisis_settings, paths, env_params, dataprep_settings
-# model
-from model.models_pipeline import *
 import os
+from model.models_pipeline import *
 
 ######################################################
-##   DEFINING FUNCTIONS USED IN the run__.py file   ##
+##   DEFINING FUNCTIONS USED IN the run.py file     ##
 ######################################################
 
-def create_dirs(mode="run_dir", # or "seed_dir"
-                results_dir="",
-                trained_dir=""
-                ) -> list: # todo: create support_functions and move there
+def create_dirs(mode: str = "run_dir", # "seed_dir"
+                results_dir: str = "",
+                trained_dir: str = "",
+                ) -> list:
+    # todo: create support_functions and move there
     """
-    Creates directories for results and the trained model, based on paths specified in the config.py file.
-    @return: results_dir, trained_dir
+    Functin to create directories at the beginning of each run, based on paths specified in the config.py file,
+    used in the run.py file.
+
+    @param mode: run_dir - creates a directory for results and trained models of whole run (all seeds).
+        seed_dir - created a directory (within the directory for results resp. trained models) for each seed.
+    @param results_dir: name of results directory.
+    @param trained_dir: name of trained models directory.
+    @return:
     """
-    from config.config import settings, crisis_settings, paths, env_params, dataprep_settings
+    from config.config import settings, crisis_settings, paths, dataprep_settings
 
     if mode == "run_dir":
         ### RESULTY DIRECTORY
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
         results_dir = os.path.join(paths.RESULTS_PATH,
                                    f"{settings.NOW}_{settings.STRATEGY_MODE}_"
-                                   f"{crisis_settings.CNAME}_{dataprep_settings.FEATURES_MODE}")
+                                   f"{crisis_settings.CNAME}_{dataprep_settings.FEATURES_MODE}"
+                                   f"_{settings.RUN_MODE}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
 
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
-        trained_dir = os.path.join(paths.TRAINED_MODELS_PATH, f"{settings.NOW}_{settings.STRATEGY_MODE}_"
-                                   f"{crisis_settings.CNAME}_{dataprep_settings.FEATURES_MODE}")
+        trained_dir = os.path.join(paths.TRAINED_MODELS_PATH, f"{settings.NOW}"
+                                                              f"_{settings.STRATEGY_MODE}"
+                                                              f"_{crisis_settings.CNAME}"
+                                                              f"_rew_{settings.REWARD_MEASURE}"
+                                                              f"_{dataprep_settings.FEATURES_MODE}"
+                                                              f"_{settings.RUN_MODE}")
         os.makedirs(trained_dir)
         return [results_dir, trained_dir]
 
@@ -61,18 +63,16 @@ def create_dirs(mode="run_dir", # or "seed_dir"
 
 def config_logging_to_txt(results_subdir,
                           trained_subdir,
-                          seeds_list,
                           logsave_path
                           ) -> None:
     # todo: create support_functions and move there
     """
-
     Writes all configurations and related parameters into the config_log.txt file.
 
-    @param results_dir: the directory where the results for the current run are saved
-    @param trained_dir: the directory where the model of the current run is saved
+    @param results_subdir: the directory where the results for the current run are saved
+    @param trained_subdir: the directory where the model of the current run is saved
+    @param logsave_path: where the hereby created logging file is saved
     @return: None
-
     """
     from config.config import settings, crisis_settings, paths, env_params
     txtfile_path = os.path.join(logsave_path, "configurations.txt")
@@ -85,7 +85,7 @@ def config_logging_to_txt(results_subdir,
                         "SETTINGS\n"
                         "------------------------------------\n"
                         f"NOW                  : {settings.NOW}\n"
-                        f"SEEDS LIST           : {seeds_list}\n"
+                        f"SEEDS LIST           : {settings.SEEDS_LIST}\n"
                         f"STRATEGY_MODE        : {settings.STRATEGY_MODE}\n"
                         f"AGENTS_LIST          : {settings.AGENTS_LIST}\n"
                         f"REBALANCE_WINDOW     : {settings.REBALANCE_WINDOW}\n"
@@ -132,108 +132,105 @@ def config_logging_to_txt(results_subdir,
                             "------------------------------------\n")
         if agent_ == "ppo":
             with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._ppo.policy}\n"
-                                f"ent_coef           : {agent_params._ppo.ent_coef}\n"
+                text_file.write(f"policy             : {agent_params._ppo.POLICY}\n"
+                                f"ent_coef           : {agent_params._ppo.ENT_COEF}\n"
                                 f"default parameters (unchanged from default as given by stable-baselines):"
-                                f"gamma              : {agent_params._ppo.gamma}\n"
-                                f"learning_rate      : {agent_params._ppo.learning_rate}\n"
-                                f"n_steps            : {agent_params._ppo.n_steps}\n"
+                                f"gamma              : {agent_params._ppo.GAMMA}\n"
+                                f"learning_rate      : {agent_params._ppo.LEARNING_RATE}\n"
+                                f"n_steps            : {agent_params._ppo.N_STEPS}\n"
                                 f"batch_size         : Optional[int] = 64\n"
-                                f"n_epochs           : {agent_params._ppo.n_epochs}\n"
-                                f"gae_lambda         : {agent_params._ppo.gae_lambda}\n"
-                                f"clip_range_vf      : {agent_params._ppo.clip_range_vf}\n"
-                                f"clip_range         : {agent_params._ppo.clip_range}\n"
-                                f"vf_coef            : {agent_params._ppo.vf_coef}\n"
-                                f"max_grad_norm      : {agent_params._ppo.max_grad_norm}\n"
-                                f"use_sde            : {agent_params._ppo.use_sde}\n"
-                                f"sde_sample_freq    : {agent_params._ppo.sde_sample_freq}\n"
-                                f"target_kl          : {agent_params._ppo.target_kl}\n"
-                                f"tensorboard_log    : {agent_params._ppo.tensorboard_log}\n"
-                                f"create_eval_env    : {agent_params._ppo.create_eval_env}\n"
-                                f"policy_kwargs      : {agent_params._ppo.policy_kwargs}\n"
-                                f"verbose            : {agent_params._ppo.verbose}\n"
-                                f"device             : {agent_params._ppo.device}\n"
-                                f"init_setup_model   : {agent_params._ppo.init_setup_model}\n"
+                                f"n_epochs           : {agent_params._ppo.N_EPOCHS}\n"
+                                f"gae_lambda         : {agent_params._ppo.GAE_LAMBDA}\n"
+                                f"clip_range_vf      : {agent_params._ppo.CLIP_RANGE_VF}\n"
+                                f"clip_range         : {agent_params._ppo.CLIP_RANGE}\n"
+                                f"vf_coef            : {agent_params._ppo.VF_COEF}\n"
+                                f"max_grad_norm      : {agent_params._ppo.MAX_GRAD_NORM}\n"
+                                f"use_sde            : {agent_params._ppo.USE_SDE}\n"
+                                f"sde_sample_freq    : {agent_params._ppo.SDE_SAMPLE_FREQ}\n"
+                                f"target_kl          : {agent_params._ppo.TARGET_KL}\n"
+                                f"tensorboard_log    : {agent_params._ppo.TENSORBOARD_LOG}\n"
+                                f"create_eval_env    : {agent_params._ppo.CREATE_EVAL_ENV}\n"
+                                f"policy_kwargs      : {agent_params._ppo.POLICY_KWARGS}\n"
+                                f"verbose            : {agent_params._ppo.VERBOSE}\n"
+                                f"device             : {agent_params._ppo.DEVICE}\n"
+                                f"init_setup_model   : {agent_params._ppo.INIT_SETUP_MODEL}\n"
                                 f"TRAINING_TIMESTEPS : {agent_params._ppo.TRAINING_TIMESTEPS}\n")
         elif agent_ == "ddpg":
             with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._ddpg.policy}\n"
-                                f"action_noise       : {agent_params._ddpg.action_noise}\n"
+                text_file.write(f"policy             : {agent_params._ddpg.POLICY}\n"
+                                f"action_noise       : {agent_params._ddpg.ACTION_NOISE}\n"
                                 f"default parameters (unchanged from default as given by stable-baselines):"
-                                f"gamma              : {agent_params._ddpg.gamma}\n"
-                                f"learning_rate      : {agent_params._ddpg.learning_rate}\n"
-                                f"buffer_size        : {agent_params._ddpg.buffer_size}\n"
-                                f"learning_starts    : {agent_params._ddpg.learning_starts}\n"
-                                f"batch_size         : {agent_params._ddpg.batch_size}\n"
-                                f"tau                : {agent_params._ddpg.tau}\n"
-                                f"gradient_steps     : {agent_params._ddpg.gradient_steps}\n"
-                                f"optimize_memory_usage : {agent_params._ddpg.optimize_memory_usage}\n"
-                                f"tensorboard_log    : {agent_params._ddpg.tensorboard_log}\n"
-                                f"create_eval_env    : {agent_params._ddpg.create_eval_env}\n"
-                                f"policy_kwargs      : {agent_params._ddpg.policy_kwargs}\n"
-                                f"verbose            : {agent_params._ddpg.verbose}\n"
-                                f"device             : {agent_params._ddpg.device}\n"
-                                f"init_setup_model   : {agent_params._ddpg.init_setup_model}\n"
+                                f"gamma              : {agent_params._ddpg.GAMMA}\n"
+                                f"learning_rate      : {agent_params._ddpg.LEARNING_RATE}\n"
+                                f"buffer_size        : {agent_params._ddpg.BUFFER_SIZE}\n"
+                                f"learning_starts    : {agent_params._ddpg.LEARNING_STARTS}\n"
+                                f"batch_size         : {agent_params._ddpg.BATCH_SIZE}\n"
+                                f"tau                : {agent_params._ddpg.TAU}\n"
+                                f"gradient_steps     : {agent_params._ddpg.GRADIENT_STEPS}\n"
+                                f"optimize_memory_usage : {agent_params._ddpg.OPTIMIZE_MEMORY_USAGE}\n"
+                                f"tensorboard_log    : {agent_params._ddpg.TENSORBOARD_LOG}\n"
+                                f"create_eval_env    : {agent_params._ddpg.CREATE_EVAL_ENV}\n"
+                                f"policy_kwargs      : {agent_params._ddpg.POLICY_KWARGS}\n"
+                                f"verbose            : {agent_params._ddpg.VERBOSE}\n"
+                                f"device             : {agent_params._ddpg.DEVICE}\n"
+                                f"init_setup_model   : {agent_params._ddpg.INIT_SETUP_MODEL}\n"
                                 f"TRAINING_TIMESTEPS : {agent_params._ddpg.TRAINING_TIMESTEPS}\n")
         elif agent_ == "a2c":
             with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._a2c.policy}\n"
-                                f"ent_coef           : {agent_params._a2c.ent_coef}\n"
-                                f"vf_coef            : {agent_params._a2c.vf_coef}\n"
-                                f"learning_rate      : {agent_params._a2c.learning_rate}\n"
-                                f"gamma              : {agent_params._a2c.gamma}\n"
-                                f"gae_lambda         : {agent_params._a2c.gae_lambda}\n"
-                                f"max_grad_norm      : {agent_params._a2c.max_grad_norm}\n"
-                                f"rms_prop_eps       : {agent_params._a2c.rms_prop_eps}\n"
-                                f"use_rms_prop       : {agent_params._a2c.use_rms_prop}\n"
-                                f"n_steps            : {agent_params._a2c.n_steps}\n"
-                                f"use_sde            : {agent_params._a2c.use_sde}\n"
-                                f"sde_sample_freq    : {agent_params._a2c.sde_sample_freq}\n"
-                                f"normalize_advantage: {agent_params._a2c.normalize_advantage}\n"
-                                f"tensorboard_log    : {agent_params._a2c.tensorboard_log}\n"
-                                f"create_eval_env    : {agent_params._a2c.create_eval_env}\n"
-                                f"policy_kwargs      : {agent_params._a2c.policy_kwargs}\n"
-                                f"verbose            : {agent_params._a2c.verbose}\n"
-                                f"device             : {agent_params._a2c.device}\n"
-                                f"init_setup_model   : {agent_params._a2c.init_setup_model}\n"
+                text_file.write(f"policy             : {agent_params._a2c.POLICY}\n"
+                                f"ent_coef           : {agent_params._a2c.ENT_COEF}\n"
+                                f"vf_coef            : {agent_params._a2c.VF_COEF}\n"
+                                f"learning_rate      : {agent_params._a2c.LEARNING_RATE}\n"
+                                f"gamma              : {agent_params._a2c.GAMMA}\n"
+                                f"gae_lambda         : {agent_params._a2c.GAE_LAMBDA}\n"
+                                f"max_grad_norm      : {agent_params._a2c.MAX_GRAD_NORM}\n"
+                                f"rms_prop_eps       : {agent_params._a2c.RMS_PROP_EPS}\n"
+                                f"use_rms_prop       : {agent_params._a2c.USE_RMS_PROP}\n"
+                                f"n_steps            : {agent_params._a2c.N_STEPS}\n"
+                                f"use_sde            : {agent_params._a2c.USE_SDE}\n"
+                                f"sde_sample_freq    : {agent_params._a2c.SDE_SAMPLE_FREQ}\n"
+                                f"normalize_advantage: {agent_params._a2c.NORMALIZE_ADVANTAGE}\n"
+                                f"tensorboard_log    : {agent_params._a2c.TENSORBOARD_LOG}\n"
+                                f"create_eval_env    : {agent_params._a2c.CREATE_EVAL_ENV}\n"
+                                f"policy_kwargs      : {agent_params._a2c.POLICY_KWARGS}\n"
+                                f"verbose            : {agent_params._a2c.VERBOSE}\n"
+                                f"device             : {agent_params._a2c.DEVICE}\n"
+                                f"init_setup_model   : {agent_params._a2c.INIT_SETUP_MODEL}\n"
                                 f"TRAINING_TIMESTEPS : {agent_params._a2c.TRAINING_TIMESTEPS}\n")
     return None
 
-def data_handling(# define if you want to pre-process anew or not (usually done in config.py file) # todo: create support_functions and move there
-                preprocess_anew=dataprep_settings.PREPROCESS_ANEW,
-                # PARAMETERS FOR DATA IMPORT (EITHER PRE-PROCESSED DF OR RAW DF)
-                preprocessed_data_file=None, #paths.PREPROCESSED_DATA_FILE,
-                save_path=None,  # paths.PREPROCESSED_DATA_PATH
-
-                # BASE PARAMS FOR LOADING THE RAW DATA SET for preprocessing pipeline - with load_dataset()
-                raw_data_file=None, #paths.RAW_DATA_FILE,
-                col_subset=None,#dataprep_settings.RAW_DF_COLS_SUBSET,
-                date_subset=None,#"datadate",
-                date_subset_startdate=None, #settings.STARTDATE_TRAIN,
-
-                # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED in preprocessing pipeline
-                calculate_price_volume_func="calculate_price_volume_WhartonData",
-                add_technical_indicator_func="add_technical_indicator_with_StockStats",
-                add_other_features_func=None,  # "add_other_features",
-                add_ANN_features_func=None,
-                add_crisis_measure_func="add_crisis_measure",
-
-                # PASSING PARAMETERS FOR EACH OPTIONAL FUNCTION
-                # params for calculate_price_function()
-                calculate_price_volume_func_params={"new_cols_subset": dataprep_settings.NEW_COLS_SUBSET,
+def data_handling(
+        # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED in preprocessing pipeline
+        calculate_price_volume_func : str = "calculate_price_volume_WhartonData",
+        add_technical_indicator_func : str = "add_technical_indicator_with_StockStats",
+        add_other_features_func = None,  # "add_other_features",
+        add_ANN_features_func = None,
+        add_crisis_measure_func : str = "add_crisis_measure",
+        # PASSING PARAMETERS FOR EACH OPTIONAL FUNCTION NAMED ABOVE
+        calculate_price_volume_func_params: dict = {"new_cols_subset": dataprep_settings.NEW_COLS_SUBSET,
                                                     "target_subset": None},
-                # params for add_technical_indicator_func
-                add_technical_indicator_func_params={"technical_indicators_list": ["macd", "rsi_30", "cci_30", "dx_30"]},
-                # params for adding other features (e.g. volatility)
-                add_other_features_func_params={"feature": "returns_volatility",
-                                                "window_days": 7},
-                # params for adding ANN-created features
-                add_ANN_features_func_params={},
-                # params for add_crisis_measure_func
-                add_crisis_measure_func_params={"crisis_measure": crisis_settings.CRISIS_MEASURE},
-                ):
+        add_technical_indicator_func_params: dict = {"technical_indicators_list":
+                                                         ["macd", "rsi_30", "cci_30", "dx_30"]},
+        add_other_features_func_params: dict = {"feature": "returns_volatility",
+                                        "window_days": 7},
+        # params for adding ANN-created features
+        add_ANN_features_func_params : dict = {},
+        # params for add_crisis_measure_func
+        add_crisis_measure_func_params: dict = {"crisis_measure": crisis_settings.CRISIS_MEASURE},
+
+        # ----- LEAVE -----
+        preprocess_anew : bool = dataprep_settings.PREPROCESS_ANEW,
+        # PARAMETERS FOR DATA IMPORT (EITHER PRE-PROCESSED DF OR RAW DF), can be None
+        preprocessed_data_file : str = paths.PREPROCESSED_DATA_FILE,
+        save_path : str = paths.PREPROCESSED_DATA_PATH,
+        # BASE PARAMS FOR LOADING THE RAW DATA SET for preprocessing pipeline - with load_dataset()
+        raw_data_file : str = paths.RAW_DATA_FILE,
+        col_subset : list = dataprep_settings.RAW_DF_COLS_SUBSET,
+        date_subset : str = dataprep_settings.DATE_COLUMN,
+        date_subset_startdate : int = settings.STARTDATE_TRAIN,
+        ) -> pd.DataFrame:
     """
-    Handles the data set to be use dfor the modelind.
+    Handles the data set to be used for the modeling.
     If preprocess_anew = False, loads and returns the already-preprocessed dataset.
     If preprocess_anew = True, calls the data_preprocessing_pipeline function from preprocessors.py, using the
     preprocessing specifications handed to the function (config.txt: dataprep_settings)
@@ -249,14 +246,15 @@ def data_handling(# define if you want to pre-process anew or not (usually done 
 
     """
     # if we don't want to pre-process the data (settings in config.py), we need to import an existing per-processed df
-    if preprocess_anew == False:
+    if not preprocess_anew:
         # get name of preprocessed data file based on features mode (fm), set in config.py file
         # unless we have explicitly defined the file to be used in the functions parameters
 
         if preprocessed_data_file is None:
-            preprocessed_data_file = os.path.join(paths.PREPROCESSED_DATA_PATH, f"data_{dataprep_settings.DATASET_CODE}_" 
-                                                            f"{dataprep_settings.DATABASE}_"
-                                                            f"{dataprep_settings.FEATURES_MODE}.csv")
+            preprocessed_data_file = os.path.join(paths.PREPROCESSED_DATA_PATH,
+                                                  f"data_{dataprep_settings.DATASET_CODE}_" 
+                                                  f"{dataprep_settings.DATABASE}_"
+                                                  f"{dataprep_settings.FEATURES_MODE}.csv")
             logging.warning(f"preprocessed_data_file: , {preprocessed_data_file}")
         elif preprocessed_data_file is not None:
             pass
@@ -277,8 +275,9 @@ def data_handling(# define if you want to pre-process anew or not (usually done 
                             f"{preprocessed_data_file}")
     # if we want to pre-process a raw data set (settings in config.py),
     # we need to import the raw data set and apply preprocessors from preprocessors.py
-    elif preprocess_anew == True:
+    elif preprocess_anew:
         if os.path.exists(raw_data_file):
+            print("preprocessing the raw dataset.")
             logging.warning(f"Data handling: Preprocessing the raw data set; {raw_data_file}")
             # call function preprocess_data from preprocessors.py, specifying level of pre-processing
             data = data_preprocessing_pipeline(# BASE PARAMS FOR LOADING THE DATA SET - with load_dataset()
