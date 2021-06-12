@@ -15,8 +15,9 @@ classes:
 # TODO: update config loggings! e.g. which reward function used, 6.5. was log(newPFval/oldPFval) for mimicking risk aversion
 class settings:
     """
-    Define general settings for the whole run and global variables.
+    Defining general settings for the whole run and global variables.
     """
+    obs_list_private = []
     # ---------------SET MANUALLY---------------
     ### strategy mode to be run
     STRATEGY_MODE = "ppo"
@@ -31,11 +32,11 @@ class settings:
     # if substring is found in main string, do:...
     # STRATEGY_MODE = None # only used for debugging (no models are run then)
 
-    #REWARD_MEASURE = "addPFVal"
-    REWARD_MEASURE = "logU"
+    REWARD_MEASURE = "addPFVal"
+    #REWARD_MEASURE = "logU"
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days
 
-    RUN_MODE = "st" # = "short",saving trained agent after each run and contibue training only on the next train data chunk, using pre-trained agent (faster)
+    RUN_MODE = "st" # = "short",saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
     #RUN_MODE = "ext" # = "extended", when training again on the whole training dataset for each episode
     # NOTE: the modes above should give the same results actually, if the correct seed
 
@@ -48,7 +49,7 @@ class settings:
 
     ### Set dates
     # train
-    STARTDATE_TRAIN = 20141001 #20090102  # Note: this is also the "global startdate"
+    STARTDATE_TRAIN = 20090102 #20141001 #20090102  # Note: this is also the "global startdate"
     ENDDATE_TRAIN = 20151001
     # validation
     STARTDATE_VALIDATION = 20151001
@@ -112,7 +113,7 @@ class dataprep_settings:
     MARKET_INDICATORS = []
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm6"
+    FEATURES_MODE = "fm1"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -242,11 +243,20 @@ class agent_params:
         DEVICE          : DEVICE – DEVICE (cpu, cuda, ..., auto) on which the code should be run.
                           Setting it to auto, the code will be run on the GPU if possible.
         _INIT_SETUP_MODEL:
+
+        Note: the parameters from the paper were default parameters from stable_baselines3, which were
+        (I guess # todo: check)
+        tune by the people from stable-baselines on stable-baselines zoo environment(s) # todo: find out which one
+        Therefore, the parameters need to be tuned for the current evironment as well # todo!
         """
-        # entropy coefficient for the loss calculation
+        ##### FEATURE EXTRACTOR & POLICY NETWORK
+        # multiple linear perceptrons
         POLICY = 'MlpPolicy'
+
+        ##### HYPERPARAMETERS WORTHY TUNING
+        # entropy coefficient for the loss calculation; how much we weight the entropy in the loss
         ENT_COEF = 0.005
-        # default parameters (unchanged from default as given by stable-baselines)
+
         GAMMA = 0.99
         LEARNING_RATE = 3e-4
         N_STEPS = 2048 # number of steps to run for one update of the (actor/critic) network parameters, default = 2048 # todo: ?

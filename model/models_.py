@@ -56,7 +56,8 @@ def DRL_train(env_train,
             model = PPO(policy='MlpPolicy',  # was PPO2 in sb2 tf1.x
                         env=env_train,  # environment where the agent learns and acts
                         seed=settings.SEED_AGENT,
-                        ent_coef=agent_params._ppo.ENT_COEF,  # entropy coefficient
+
+                        ent_coef=agent_params._ppo.ENT_COEF,  # entropy coefficient # TODO: !!!
                         # default parameters (unchanged from default as given by stable-baselines)
                         learning_rate=agent_params._ppo.LEARNING_RATE,  # can also be variable, e.g. a function of the current progress remaining etc.
                         # todo: where is learning rate used exactly?

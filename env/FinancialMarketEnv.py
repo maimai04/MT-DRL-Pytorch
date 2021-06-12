@@ -40,6 +40,7 @@ class FinancialMarketEnv(gym.Env):
                  final_state_counter: int = 0,
                  steps_counter: int = 0
                  ):
+        super(FinancialMarketEnv, self).__init__()
         """
         @param df: pd.DataFrame(), sorted by date, then ticker, index column is the datadate factorized
                    (split_by_date function)
@@ -94,8 +95,9 @@ class FinancialMarketEnv(gym.Env):
         self.current_n_asset_holdings = [0] * self.assets_dim
         self.state = {"cash": [self.current_cash_balance],
                       "n_asset_holdings": self.current_n_asset_holdings}
-        if self.iteration == 1 and self.steps_counter == 0:
+        if self.steps_counter == 0:
             self.asset_names = df[dataprep_settings.ASSET_NAME_COLUMN].unique()
+        if self.iteration == 1 and self.steps_counter == 0:
             self.state_header = ["cash"] + [s + "_n_holdings" for s in self.asset_names]
         for feature in self.features_list:
             self.state.update({feature: self.data[feature].values.tolist()})
@@ -103,7 +105,7 @@ class FinancialMarketEnv(gym.Env):
                 suffix = "_" + feature
                 self.state_header += [s + suffix for s in self.asset_names]
         # create flattened state_flattened
-        self.state_flattened = list(chain(*list(self.state.values())))
+        self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
 
 
         # self.reset() # todo?
@@ -299,7 +301,7 @@ class FinancialMarketEnv(gym.Env):
             for feature in self.features_list:  # now price included in features list
                 self.state.update({feature: self.data[feature].values.tolist()})
             # create flattened state_flattened
-            self.state_flattened = list(chain(*list(self.state.values())))
+            self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
 
             # final portfolio + cash value after the end of the day with new prices (move up # todo)
             end_cash_value = self.current_cash_balance
@@ -340,7 +342,7 @@ class FinancialMarketEnv(gym.Env):
         """
         we update our current crisis measure value, if we have some (if it is not set as None in config.py.
         @return: crisis measure value
-                 (e.g. if our crisis measure = turbulence:index; then we reurn current market turbulence)
+                 (e.g. if our crisis measure = turbulence:index; then we return current market turbulence)
         """
         if self.crisis_measure == "turbulence":
             self.crisis = self.data[self.crisis_measure].values[0]  # TODO: find a nicer way to put this in
@@ -485,7 +487,7 @@ class FinancialMarketEnv(gym.Env):
             print("ERROR (env, buy): crisis condition must be None or specified correctly (see doc).")
         return exercised_actions
 
-    def reset(self) -> list:
+    def reset(self) -> np.array:
         """
         Reset the environment to its initializations.
         @return: initial state after reset
@@ -526,7 +528,7 @@ class FinancialMarketEnv(gym.Env):
                     suffix = "_" + feature
                     self.state_header += [s + suffix for s in self.asset_names]
             # create flattened state_flattened
-            self.state_flattened = list(chain(*list(self.state.values())))
+            self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
 
             ##### INITIALIZE MEMORIES / MEMORY TRACKERS
 
@@ -581,7 +583,7 @@ class FinancialMarketEnv(gym.Env):
             for feature in self.features_list:
                 self.state.update({feature: self.data[feature].values.tolist()})
             # create flattened state_flattened
-            self.state_flattened = list(chain(*list(self.state.values())))
+            self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
             self.n_asset_holdings = self.current_n_asset_holdings
 
             ##### INITIALIZE MEMORIES / MEMORY TRACKERS
