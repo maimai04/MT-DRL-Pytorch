@@ -10,11 +10,11 @@ from stable_baselines3 import DDPG
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise  # , AdaptiveParamNoiseSpec
 from stable_baselines3.common.vec_env import DummyVecEnv
 # from stable_baselines3.gail import generate_expert_traj, ExpertDataset  # TODO: check if they did this somewhere (?)
-from config.config import paths, crisis_settings, settings, env_params, agent_params, dataprep_settings
-from preprocessing.preprocessors import *
+from config.config import *
+from dataprep.preprocessors import *
 # customized env
 # from env.EnvMultipleStock_train import StockEnvTrain
-from env.FinancialMarketEnv import FinancialMarketEnv  # StockEnvValidation
+from environment.FinancialMarketEnv import FinancialMarketEnv  # StockEnvValidation
 # from env.EnvMultipleStock_trade import StockEnvTrade
 import os
 
@@ -28,6 +28,7 @@ import os
 def DRL_train(env_train,
               trained_dir,
               results_dir,
+              TB_log_dir,
               save_name,
               iteration,
               agent_name=settings.STRATEGY_MODE,
@@ -73,7 +74,7 @@ def DRL_train(env_train,
                         use_sde=agent_params._ppo.USE_SDE, # todo: ?
                         sde_sample_freq=agent_params._ppo.SDE_SAMPLE_FREQ,
                         target_kl=agent_params._ppo.TARGET_KL,
-                        tensorboard_log=agent_params._ppo.TENSORBOARD_LOG,
+                        tensorboard_log=TB_log_dir,
                         create_eval_env=agent_params._ppo.CREATE_EVAL_ENV,
                         policy_kwargs=agent_params._ppo.POLICY_KWARGS,
                         verbose=agent_params._ppo.VERBOSE,
@@ -121,7 +122,7 @@ def DRL_train(env_train,
                          train_freq=agent_params._ddpg.TRAIN_FREQ,
                          gradient_steps=agent_params._ddpg.GRADIENT_STEPS,
                          optimize_memory_usage=agent_params._ddpg.OPTIMIZE_MEMORY_USAGE,
-                         tensorboard_log=agent_params._ddpg.TENSORBOARD_LOG,
+                         tensorboard_log=TB_log_dir,
                          create_eval_env=agent_params._ddpg.CREATE_EVAL_ENV,
                          policy_kwargs=agent_params._ddpg.POLICY_KWARGS,
                          verbose=agent_params._ddpg.VERBOSE,

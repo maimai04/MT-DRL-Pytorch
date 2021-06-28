@@ -1,13 +1,52 @@
 import os
+import pandas as pd
 from model.models_pipeline import *
+from config.config import *
+from config.dataprep_config import *
 
 ######################################################
 ##   DEFINING FUNCTIONS USED IN the run.py file     ##
 ######################################################
 
+def load_dataset(*,
+                 file_path: str,
+                 col_subset: list = data_settings.FEATURES_LIST,
+                 date_subset: str = "datadate",
+                 date_subset_startdate: int = 19950101,
+                 ) -> pd.DataFrame:
+    """
+    Load the .csv dataset from the provided file path.
+    If a col_subset is specified, only the specified columns subset of the loaded dataset is returned.
+    (This can be used if there are many columns and we only want to use 5 of them e.g.)
+
+    @param col_subset:
+    @param date_subset_startdate:
+    @param date_subset:
+    @type file_path: object
+    @param file_path as specified in config.py
+    @return: (df) pandas dataframe
+
+    # Note: the asterisk (*) enforces that all the following variables have to be specified as keyword argument, when being called
+    # see also: https://treyhunner.com/2018/10/asterisks-in-python-what-they-are-and-how-to-use-them/
+
+    INPUT: df as csv, ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), ordered by ticker, then date
+    """
+    df = pd.read_csv(file_path, index_col=0)
+
+    if date_subset and date_subset_startdate is not None:
+        df = df[df[date_subset] >= date_subset_startdate]
+
+    if col_subset is not None:
+        subcols = [date_subset, data_settings.ASSET_NAME_COLUMN] + col_subset
+        df = df[subcols]
+
+    return df
+
 def create_dirs(mode: str = "run_dir", # "seed_dir"
                 results_dir: str = "",
                 trained_dir: str = "",
+                dummydata: bool = False,
                 ) -> list:
     # todo: create support_functions and move there
     """
@@ -20,23 +59,28 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
     @param trained_dir: name of trained models directory.
     @return:
     """
-    from config.config import settings, crisis_settings, paths, dataprep_settings
+    if dummydata:
+        results_path = os.path.join("dummyresults", "results")
+        trained_models_path = os.path.join("dummyresults", "trained_models")
+    else:
+        results_path = paths.RESULTS_PATH
+        trained_models_path = paths.TRAINED_MODELS_PATH
 
     if mode == "run_dir":
         ### RESULTY DIRECTORY
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
-        results_dir = os.path.join(paths.RESULTS_PATH,
+        results_dir = os.path.join(results_path,
                                    f"{settings.NOW}_{settings.STRATEGY_MODE}_"
-                                   f"{crisis_settings.CNAME}_{dataprep_settings.FEATURES_MODE}"
+                                   f"{crisis_settings.CNAME}_{data_settings.FEATURES_MODE}"
                                    f"_{settings.RUN_MODE}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
 
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
-        trained_dir = os.path.join(paths.TRAINED_MODELS_PATH, f"{settings.NOW}"
+        trained_dir = os.path.join(trained_models_path, f"{settings.NOW}"
                                                               f"_{settings.STRATEGY_MODE}"
                                                               f"_{crisis_settings.CNAME}"
                                                               f"_rew_{settings.REWARD_MEASURE}"
-                                                              f"_{dataprep_settings.FEATURES_MODE}"
+                                                              f"_{data_settings.FEATURES_MODE}"
                                                               f"_{settings.RUN_MODE}")
         os.makedirs(trained_dir)
         return [results_dir, trained_dir]
@@ -74,7 +118,6 @@ def config_logging_to_txt(results_subdir,
     @param logsave_path: where the hereby created logging file is saved
     @return: None
     """
-    from config.config import settings, crisis_settings, paths, env_params
     txtfile_path = os.path.join(logsave_path, "configurations.txt")
 
     with open(txtfile_path, "w") as text_file:
@@ -88,12 +131,12 @@ def config_logging_to_txt(results_subdir,
                         f"SEEDS LIST           : {settings.SEEDS_LIST}\n"
                         f"STRATEGY_MODE        : {settings.STRATEGY_MODE}\n"
                         f"AGENTS_LIST          : {settings.AGENTS_LIST}\n"
-                        f"REBALANCE_WINDOW     : {settings.REBALANCE_WINDOW}\n"
+                        f"ROLLING_WINDOW       : {settings.ROLL_WINDOW}\n"
                         f"VALIDATION_WINDOW    : {settings.VALIDATION_WINDOW}\n"
                         f"STARTDATE_TRAIN      : {settings.STARTDATE_TRAIN}\n"
                         f"ENDDATE_TRAIN        : {settings.ENDDATE_TRAIN}\n"
-                        f"STARTDATE_VALIDATION : {settings.STARTDATE_VALIDATION}\n"
-                        f"ENDDATE_VALIDATION   : {settings.ENDDATE_VALIDATION}\n"
+                       # f"STARTDATE_VALIDATION : {settings.STARTDATE_VALIDATION}\n"
+                       # f"ENDDATE_VALIDATION   : {settings.ENDDATE_VALIDATION}\n"
                         "------------------------------------\n"
                         f"ENVIRONMENT VARIABLES\n"
                         "------------------------------------\n"
@@ -104,9 +147,8 @@ def config_logging_to_txt(results_subdir,
                         "------------------------------------\n"
                         f"DATA PREPARATION SETTINGS\n"
                         "------------------------------------\n"
-                        f"PREPROCESS_ANEW  : {dataprep_settings.PREPROCESS_ANEW}\n"
-                        f"FEATURES_LIST    : {dataprep_settings.FEATURES_LIST}\n"
-                        f"FEATURES_MODE    : {dataprep_settings.FEATURES_MODE}\n"
+                        f"FEATURES_LIST    : {data_settings.FEATURES_LIST}\n"
+                        f"FEATURES_MODE    : {data_settings.FEATURES_MODE}\n"
                         "------------------------------------\n"
                         f"CRISIS SETTINGS\n"
                         "------------------------------------\n"
@@ -199,135 +241,15 @@ def config_logging_to_txt(results_subdir,
                                 f"TRAINING_TIMESTEPS : {agent_params._a2c.TRAINING_TIMESTEPS}\n")
     return None
 
-def data_handling(
-        # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED in preprocessing pipeline
-        calculate_price_volume_func : str = "calculate_price_volume_WhartonData",
-        add_technical_indicator_func : str = "add_technical_indicator_with_StockStats",
-        add_other_features_func = None,  # "add_other_features",
-        add_ANN_features_func = None,
-        add_crisis_measure_func : str = "add_crisis_measure",
-        # PASSING PARAMETERS FOR EACH OPTIONAL FUNCTION NAMED ABOVE
-        calculate_price_volume_func_params: dict = {"new_cols_subset": dataprep_settings.NEW_COLS_SUBSET,
-                                                    "target_subset": None},
-        add_technical_indicator_func_params: dict = {"technical_indicators_list":
-                                                         ["macd", "rsi_30", "cci_30", "dx_30"]},
-        add_other_features_func_params: dict = {"feature": "returns_volatility",
-                                        "window_days": 7},
-        # params for adding ANN-created features
-        add_ANN_features_func_params : dict = {},
-        # params for add_crisis_measure_func
-        add_crisis_measure_func_params: dict = {"crisis_measure": crisis_settings.CRISIS_MEASURE},
-
-        # ----- LEAVE -----
-        preprocess_anew : bool = dataprep_settings.PREPROCESS_ANEW,
-        # PARAMETERS FOR DATA IMPORT (EITHER PRE-PROCESSED DF OR RAW DF), can be None
-        preprocessed_data_file : str = paths.PREPROCESSED_DATA_FILE,
-        save_path : str = paths.PREPROCESSED_DATA_PATH,
-        # BASE PARAMS FOR LOADING THE RAW DATA SET for preprocessing pipeline - with load_dataset()
-        raw_data_file : str = paths.RAW_DATA_FILE,
-        col_subset : list = dataprep_settings.RAW_DF_COLS_SUBSET,
-        date_subset : str = dataprep_settings.DATE_COLUMN,
-        date_subset_startdate : int = settings.STARTDATE_TRAIN,
-        ) -> pd.DataFrame:
-    """
-    Handles the data set to be used for the modeling.
-    If preprocess_anew = False, loads and returns the already-preprocessed dataset.
-    If preprocess_anew = True, calls the data_preprocessing_pipeline function from preprocessors.py, using the
-    preprocessing specifications handed to the function (config.txt: dataprep_settings)
-
-    @param df: raw or preprocessed
-    @return: (df) pandas dataframe, fully prepared and can be used directly for the modeling without any further steps.
-
-    Note: we can either use a raw data set and pre-process it according to the settings given in config.py
-    and preprocessors.py, or we can use an already pre-processed data set directly.
-    There is no option choosing a raw data set without pre-processing, because this could lead to errors
-    (e.g. missing values, format...), but we can just choose to pre-process the raw dataset only w.r.t. the absolute
-    minimum / basics needed (specify in config.py or manually in this function).
-
-    """
-    # if we don't want to pre-process the data (settings in config.py), we need to import an existing per-processed df
-    if not preprocess_anew:
-        # get name of preprocessed data file based on features mode (fm), set in config.py file
-        # unless we have explicitly defined the file to be used in the functions parameters
-
-        if preprocessed_data_file is None:
-            preprocessed_data_file = os.path.join(paths.PREPROCESSED_DATA_PATH,
-                                                  f"data_{dataprep_settings.DATASET_CODE}_" 
-                                                  f"{dataprep_settings.DATABASE}_"
-                                                  f"{dataprep_settings.FEATURES_MODE}.csv")
-            logging.warning(f"preprocessed_data_file: , {preprocessed_data_file}")
-        elif preprocessed_data_file is not None:
-            pass
-
-        if os.path.exists(preprocessed_data_file):
-            logging.warning(f"Data handling: Using existing pre-processed data: {preprocessed_data_file}")
-            # data = pd.read_csv(path_of_preprocessed_file, index_col=0) # todo: using load dataset from preprocessors
-            data = load_dataset(file_path=preprocessed_data_file,
-                                    col_subset=None,
-                                    date_subset=None,
-                                    date_subset_startdate=None,
-                                    )
-            data = data.sort_values([dataprep_settings.DATE_COLUMN, dataprep_settings.ASSET_NAME_COLUMN])
-            data.index = data[dataprep_settings.DATE_COLUMN].factorize()[0]
-        else:
-            raise Exception("Chosen option -using already pre-processed data set-, "
-                            "but no pre-processed data existent under given path:\n"
-                            f"{preprocessed_data_file}")
-    # if we want to pre-process a raw data set (settings in config.py),
-    # we need to import the raw data set and apply preprocessors from preprocessors.py
-    elif preprocess_anew:
-        if os.path.exists(raw_data_file):
-            print("preprocessing the raw dataset.")
-            logging.warning(f"Data handling: Preprocessing the raw data set; {raw_data_file}")
-            # call function preprocess_data from preprocessors.py, specifying level of pre-processing
-            data = data_preprocessing_pipeline(# BASE PARAMS FOR LOADING THE DATA SET - with load_dataset()
-                                                raw_data_file=raw_data_file,
-                                                col_subset=dataprep_settings.RAW_DF_COLS_SUBSET,
-                                                date_subset="datadate",
-                                                date_subset_startdate=settings.STARTDATE_TRAIN,
-
-                                                # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED
-                                                calculate_price_volume_func=calculate_price_volume_func,
-                                                add_technical_indicator_func=add_technical_indicator_func,
-                                                add_other_features_func=add_other_features_func,  # "add_other_features",
-                                                add_ANN_features_func=add_ANN_features_func,
-                                                add_crisis_measure_func=add_crisis_measure_func,
-
-                                                # PASSING PARAMETERS FOR EACH OPTIONAL FUNCTION
-                                                calculate_price_volume_func_params=calculate_price_volume_func_params,
-                                                add_technical_indicator_func_params=add_technical_indicator_func_params,
-                                                add_other_features_func_params=add_other_features_func_params,
-                                                add_ANN_features_func_params=add_ANN_features_func_params,
-                                                add_crisis_measure_func_params=add_crisis_measure_func_params)
-
-            save_df_path = os.path.join(save_path,
-                                        f"data_{dataprep_settings.DATASET_CODE}_"
-                                        f"{dataprep_settings.DATABASE}_"
-                                        f"{dataprep_settings.FEATURES_MODE}.csv")
-            data.to_csv(save_df_path)
-            data = data.sort_values([dataprep_settings.DATE_COLUMN, dataprep_settings.ASSET_NAME_COLUMN])
-            data.index = data[dataprep_settings.DATE_COLUMN].factorize()[0]
-        else:
-            raise Exception("Chosen option -pre-processing raw data set-, "
-                            "but no raw file existent under given path:\n"
-                            f"{raw_data_file}")
-
-    logging.warning("FINAL INPUT DATAFRAME")
-    logging.warning("---------------------------------------------------------")
-    logging.warning(data.head())
-    logging.warning(f"Shape of Dataframe (rows, columns)     : {data.shape}")
-    logging.warning(f"Size of Dataframe (total n. of elemets): {data.shape}\n ")
-
-    return data
-
 
 def run_model_pipeline(data,
               results_dir,
               trained_dir,
+              TB_log_dir,
               stock_dim,
               n_features,
               shape_observation_space,
-              unique_trade_dates_validation
+              #unique_trade_dates_validation
               ) -> None:
     """
     Runs the whole setup: training, validation, trading
@@ -338,13 +260,15 @@ def run_model_pipeline(data,
     if settings.STRATEGY_MODE.find("ens") == -1:
         #logging.warning(f"(RUN) STRATEGY_MODE: {settings.STRATEGY_MODE}.")
         # Single Agent Only; call function in "models.py"
-        run_model2(df=data,
+        run_model(df=data,
                   results_dir=results_dir,
                   trained_dir=trained_dir,
+                  TB_log_dir=TB_log_dir,
                   stock_dim=stock_dim,
                   n_features=n_features,
                   shape_observation_space=shape_observation_space,
-                  unique_trade_dates_validation=unique_trade_dates_validation)
+                  #unique_trade_dates_validation=unique_trade_dates_validation
+                    )
     elif settings.STRATEGY_MODE.find("ens") != -1:
     #logging.warning(f"(RUN) STRATEGY_MODE: {settings.STRATEGY_MODE}.")
         #run_ensemble(df=data,

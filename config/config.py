@@ -17,6 +17,11 @@ class settings:
     """
     Defining general settings for the whole run and global variables.
     """
+    # dataset used:
+    #DATASET = "US_stocks_WDB"
+    #DATASET = "JP_stocks_WDB"$
+    DATASET = "dummydata"
+
     obs_list_private = []
     # ---------------SET MANUALLY---------------
     ### strategy mode to be run
@@ -36,61 +41,64 @@ class settings:
     #REWARD_MEASURE = "logU"
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days
 
-    RUN_MODE = "st" # = "short",saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
-    #RUN_MODE = "ext" # = "extended", when training again on the whole training dataset for each episode
+    #RUN_MODE = "st" # = "short",saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
+    RUN_MODE = "ext" # = "extended", when training again on the whole training dataset for each episode
     # NOTE: the modes above should give the same results actually, if the correct seed
+
+    ### Set dates
+    # train
+    STARTDATE_BACKTESTING = 20000101
+    ENDDATE_BACKTESTING = 20081231
+    STARTDATE_TRAIN = 20090101 #20141001 #20090102  # Note: this is also the "global startdate"
+    ENDDATE_TRAIN = 20151231   #20151001
+    # validation (only needed for get_data_params in preprocessing)
+    #STARTDATE_VALIDATION = 20160101 #20151001
+    #ENDDATE_VALIDATION = #20200707
+    # trading starts on:     # 2016/01/01 is the date that real trading starts
+    #STARTDATE_TRADE = 20160104
+    #ENDDATE_TRADE = None
+
+    ### set windows
+    # REBALANCE_WINDOW is the number of months to retrain the model
+    # VALIDATION_WINDOW is the number of months to validate the model and select the DRL agent for trading
+    # 63 days = 3 months of each 21 trading days (common exchanges don't trade on weekends, need to change for crypto)
+    ROLL_WINDOW = 63
+    # this is basically a "step" period; we take a step of 63 days for which we extend the training window and move the validation and trade window
+    # todo: renamed to ROLL_WINDOW, was REBALANCE_WINDOW
+    VALIDATION_WINDOW = 63
+    TRAINING_WINDOW = 63
+    TRADING_WINDOW = 63
 
     # ---------------LEAVE---------------
     if STRATEGY_MODE == "ppo" or STRATEGY_MODE == "ddpg" or STRATEGY_MODE == "a2c":
         AGENTS_LIST = [STRATEGY_MODE]
 
     ### set random seeds;
-    SEEDS_LIST = [223445, 80923, 11112, 23, 5, 7774, 9090, 0, 45252, 444110]
-
-    ### Set dates
-    # train
-    STARTDATE_TRAIN = 20090102 #20141001 #20090102  # Note: this is also the "global startdate"
-    ENDDATE_TRAIN = 20151001
-    # validation
-    STARTDATE_VALIDATION = 20151001
-    ENDDATE_VALIDATION = 20200707
-    # trading starts on:     # 2016/01/01 is the date that real trading starts
-    STARTDATE_TRADE = 20160104
-    ENDDATE_TRADE = None
-
-    ### set windows
-    # REBALANCE_WINDOW is the number of months to retrain the model
-    # VALIDATION_WINDOW is the number of months to validate the model and select the DRL agent for trading
-    # 63 days = 3 months of each 21 trading days (common exchanges don't trade on weekends, need to change for crypto)
-    REBALANCE_WINDOW = 63  # this is basically a "step" period; we take a step of 63 days for which we extend the training window and move the validation and trade window
-    # todo: rename to STEP_WINDOW
-    VALIDATION_WINDOW = 63
-    TRAINING_WINDOW = 63
-    TRADING_WINDOW = 63
+    SEEDS_LIST = [0, 5, 23, 7774, 9090, 11112,  45252, 80923, 223445, 444110]
 
     ### returns current timestamp, mainly used for naming directories/ printout / logging to .txt
     NOW = datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
 
 
-class dataprep_settings:
+class data_settings:
     """
     Define variables and settings for data preprocessing.
     """
     # ---------------SET MANUALLY---------------
-    ### choose if you want to use pre-processed data (False) or raw data and pre-process (True)
-    PREPROCESS_ANEW = False  # default
-    #PREPROCESS_ANEW = True
-
     # DATA SOURCE AND DATA SET CODE
-    DATABASE = "WhartonDB"  # stands for Wharton Data Base
-    DATASET_CODE = "A"  # Dataset Code - which raw dataset is meant (see description in table)
-    # A = Base data set used by paper
-
+    DATABASE = "WDB"  # stands for Wharton Data Base
+    COUNTRY = "US"
     ### CHOOSE WHICH ARE THE (MANDATORY) BASE COLUMNS; for Wharton DB: datadate, tic
-    if DATABASE == "WhartonDB":
+    if DATABASE == "WDB":
+        # adjcp (adjusted closing price) is a default column we need in the state space because we need it to calculate
+        # the number of stocks we can buy with our limited budget
         MAIN_PRICE_COLUMN = "adjcp"
+        # this is the column where we store the tickers, we do not need them in our state space but in order to
+        # reformat the data set from long to wide format
         ASSET_NAME_COLUMN = "tic"
+        # this is the date column, we need it to split the data set in different train / validation / test sets
         DATE_COLUMN = "datadate"
+        # these are the columns which are not used for state representation
         BASE_DF_COLS = [DATE_COLUMN, ASSET_NAME_COLUMN]
 
     ### FOR DATA PREPROCESSING:
@@ -107,13 +115,14 @@ class dataprep_settings:
     RETURNS_FEATURES = ["log_return_daily"]
     TECH_INDICATORS = ["macd", "rsi_30", "cci_30", "dx_30", "volume"]  # was FEATURES_LIST
     # TECH_INDICATORS = ["macd", "rsi", "cci", "adx"] # was FEATURES_LIST
-    RISK_INDICATORS = ["returns_volatility"]
+    RISK_INDICATORS = ["ret_vola_7d"] #["returns_volatility"]
     ESG_INDICATORS = ["ESG"]
     LSTM_INDICATORS = []
     MARKET_INDICATORS = []
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm1"
+    #FEATURES_MODE = "fm1"
+    FEATURES_MODE = "try"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -136,21 +145,18 @@ class dataprep_settings:
         FEATURES_LIST = RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
     elif FEATURES_MODE == "fm10":
         FEATURES_LIST = RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
+    elif FEATURES_MODE == "try": # just for debugging
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
-
-
 class env_params:
-    # ---------------SET MANUALLY---------------
-
     # ---------------LEAVE---------------
     HMAX_NORMALIZE = 100  # todo: up and check perf
     INITIAL_CASH_BALANCE = 1000000
-    TRANSACTION_FEE_PERCENT = 0.001  # todo: check reasonab
-    REWARD_SCALING = 1e-4  # todo: check
+    TRANSACTION_FEE_PERCENT = 0.001  # todo: check reasonability: https://www.google.com/search?client=firefox-b-d&q=transaction+fee+for+stock+trading
+    REWARD_SCALING = 1e-4  # This is 0.0001.
     # shorting possiblity? # todo
-
 
 class agent_params:
     # ---------------SET MANUALLY---------------
@@ -206,36 +212,39 @@ class agent_params:
 
     class _ppo:
         """
-        policy          : policy network type
-        ent_coef        : entropy coefficient
+        POLICY          : policy network type, can be passed as str (if registered) or as instance,
+                          e.g. if custom policy is used
+                          "MlpPolicy": multiple linear perceptrons, standard neural network
+
+        ENT_COEF        : entropy coefficient, how much we weight the entropy loss in the
         GAMMA           : discount factor
         LEARNING_RATE   : can also be variable, e.g. a function of the current progress remaining etc.
-        n_steps         : number of steps the agent should take in the environment
+        N_STEPS         : number of steps the agent should take in the environment
                           The number of steps to run for each environment per update
                           (i.e. rollout buffer size is n_steps * n_envs where n_envs is number of environment copies running in parallel)
                           NOTE: n_steps * n_envs must be greater than 1 (because of the advantage normalization)
                           See https://github.com/pytorch/pytorch/issues/29372
         BATCH_SIZE      : Optional[int] = 64, minibatch size
-        n_epochs        : number of epochs when optimizing the surrogate loss
-        gae_lambda      : factor for trade-off of bias vs. variance for generalized advantage estimator
-        clip_range_vf   : clipping parameter for the value function
+        N_EPOCHS        : number of epochs when optimizing the surrogate loss
+        GAE_LAMBDa      : factor for trade-off of bias vs. variance for generalized advantage estimator
+        CLIP_RANGE_VF   : clipping parameter for the value function
                           can be a function of current progress remaining (from 1 to 0)
                           NOTE: this parameter is specific to the OpenAI implementation
                           If None (default), no clipping will be one on the value function
                           IMPORTANT: this clipping depends on the reward scaling.
-        clip_range      : clipping parameter
+        CLIP_RANGE      : clipping parameter
                           can be a function of current progress remaining (from 1 to 0)
-        vf_coef         : value function coefficient for the loss calculation
-        max_grad_norm   : The maximum value for the gradient clipping
-        use_sde         : Whether to use generalized State Dependent Exploration (gSDE)
+        VF_COEF         : value function coefficient for the loss calculation
+        MAX_GRAD_NORM   : The maximum value for the gradient clipping
+        USE_SDE         : Whether to use generalized State Dependent Exploration (gSDE)
                           instead of action noise exploration (default: False) # todo: ?
-        sde_sample_freq : Sample a new noise matrix every n steps when using gSDE
+        SDE_SAMPLE_FREQ : Sample a new noise matrix every n steps when using gSDE
                           Default: -1 (only sample at the beginning of the rollout)
-        target_kl       : Limit the KL divergence between updates,
+        TARGET_KL       : Limit the KL divergence between updates,
                           because the clipping is not enough to prevent large update
                           see issue #213, (cf https://github.com/hill-a/stable-baselines/issues/213)
                           By default, there is no limit on the kl div.
-        tensorboard_log : the log location for tensorboard (if None, no logging)
+        TENSORBOARD_LOG : the log location for tensorboard (if None, no logging)
         CREATE_EVAL_ENV : Whether to create a second environment that will be used for evaluating
                           the agent periodically. (Only available when passing string for the environment)
         POLICY_KWARGS   : additional arguments to be passed to the policy on creation
@@ -249,11 +258,11 @@ class agent_params:
         tune by the people from stable-baselines on stable-baselines zoo environment(s) # todo: find out which one
         Therefore, the parameters need to be tuned for the current evironment as well # todo!
         """
-        ##### FEATURE EXTRACTOR & POLICY NETWORK
+        ##### FEATURE EXTRACTOR & POLICY & VALUE NETWORKS
         # multiple linear perceptrons
         POLICY = 'MlpPolicy'
 
-        ##### HYPERPARAMETERS WORTHY TUNING
+        ##### HYPERPARAMETERS THAT NEED TO BEE TUNED
         # entropy coefficient for the loss calculation; how much we weight the entropy in the loss
         ENT_COEF = 0.005
 
@@ -263,7 +272,7 @@ class agent_params:
                        # rollout buffer size = n_steps here (since only 1 environment used)
                         # = n_rollout_steps
         # BATCH_SIZE: Optional[int] = 64, # minibatch size
-        N_EPOCHS = 10 # Number of epoch when optimizing the surrogate loss
+        N_EPOCHS = 10 # Number of epoch when optimizing the network loss(es)
         GAE_LAMBDA = 0.95
         CLIP_RANGE_VF = None
         CLIP_RANGE = 0.2
@@ -272,45 +281,15 @@ class agent_params:
         USE_SDE = False
         SDE_SAMPLE_FREQ = -1
         TARGET_KL = None
-        TENSORBOARD_LOG = None
+        TENSORBOARD_LOG = "TB_LOG"
         CREATE_EVAL_ENV = False
         POLICY_KWARGS = None
         VERBOSE = 0
         DEVICE = "auto"
         INIT_SETUP_MODEL = True
+
+        ### HYPERPARAMETERS FOR PPO TRAINING
         TRAINING_TIMESTEPS = 10000#100000 # todo: ?
-
-class crisis_settings:
-    """
-    Choose if you want to use a crisis measure (such as turbulence and other) to act as a stop loss in times of
-    turbulence.
-    Choose parameters and settings for your crisis measure of choice.
-    """
-
-    # ---------------SET MANUALLY---------------
-    CRISIS_MEASURE = None  # default
-    # CRISIS_MEASURE = "turbulence"
-    # CRISIS_MEASURE = "volatility"
-
-    # ---------------LEAVE---------------
-    if CRISIS_MEASURE == "turbulence":
-        CNAME = "turb"
-        # CRISIS_THRESHOLD = 140  # turbulence threshold
-        # CRISIS_DATA = None  # path to pre-calculated data
-        CUTOFF_XPERCENTILE = .90
-        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
-    elif CRISIS_MEASURE == "volatility":
-        CNAME = "vola"
-        CUTOFF_XPERCENTILE = ""
-        # CRISIS_THRESHOLD = None  # turbulence threshold
-        # CRISIS_DATA = None
-        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
-    elif CRISIS_MEASURE is None:
-        CNAME = ""
-        CUTOFF_XPERCENTILE = ""
-        print("(config) no crisis measure selected.")
-    else:
-        print("(config) ValueError: crisis measure selected unkNOWn and not None.")
 
 class paths:
     # ---------------LEAVE---------------
@@ -344,10 +323,41 @@ class paths:
     TESTING_DATA_FILE = "test.csv"  # TODO: WHERE IS THIS FILE? rm
     RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv")  # todo: was TRAINING_DATA_FILE
     # ---------------LEAVE---------------
-    if dataprep_settings.DATABASE == "WhartonDB" and \
-            dataprep_settings.DATASET_CODE == "A" and dataprep_settings.FEATURES_MODE == "fm1":
-        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, "done_data.csv")  # todo: was PREP_DATA_FILE
+    if data_settings.DATABASE == "WhartonDB" and data_settings.FEATURES_MODE == "fm1":
+        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, DATASET +".csv")
     else:
-        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"data_{dataprep_settings.DATASET_CODE}_"
-                                                                      f"{dataprep_settings.DATABASE}_"
-                                                                      f"{dataprep_settings.FEATURES_MODE}.csv")
+        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{data_settings.COUNTRY}_stocks_"
+                                                                      f"{data_settings.DATABASE}_"
+                                                                      f"{data_settings.FEATURES_MODE}.csv")
+
+class crisis_settings:
+    """
+    Choose if you want to use a crisis measure (such as turbulence and other) to act as a stop loss in times of
+    turbulence.
+    Choose parameters and settings for your crisis measure of choice.
+    """
+
+    # ---------------SET MANUALLY---------------
+    CRISIS_MEASURE = None  # default
+    # CRISIS_MEASURE = "turbulence"
+    # CRISIS_MEASURE = "volatility"
+
+    # ---------------LEAVE---------------
+    if CRISIS_MEASURE == "turbulence":
+        CNAME = "turb"
+        # CRISIS_THRESHOLD = 140  # turbulence threshold
+        # CRISIS_DATA = None  # path to pre-calculated data
+        CUTOFF_XPERCENTILE = .90
+        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
+    elif CRISIS_MEASURE == "volatility":
+        CNAME = "vola"
+        CUTOFF_XPERCENTILE = ""
+        # CRISIS_THRESHOLD = None  # turbulence threshold
+        # CRISIS_DATA = None
+        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
+    elif CRISIS_MEASURE is None:
+        CNAME = ""
+        CUTOFF_XPERCENTILE = ""
+        print("(config) no crisis measure selected.")
+    else:
+        print("(config) ValueError: crisis measure selected unkNOWn and not None.")
