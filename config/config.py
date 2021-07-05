@@ -1,5 +1,6 @@
 import datetime
 import os
+import torch
 
 """
 defining classes for grouping parameters.
@@ -7,7 +8,6 @@ defining classes for grouping parameters.
 classes:
 --------
     settings
-    crisis_settings
     paths
     env_params
 """
@@ -17,38 +17,24 @@ class settings:
     """
     Defining general settings for the whole run and global variables.
     """
-    # dataset used:
-    #DATASET = "US_stocks_WDB"
-    #DATASET = "JP_stocks_WDB"$
-    DATASET = "dummydata"
-
-    obs_list_private = []
     # ---------------SET MANUALLY---------------
+    # dataset used:
+    DATASET = "US_stocks_WDB"
+    #DATASET = "JP_stocks_WDB"$
+
     ### strategy mode to be run
-    STRATEGY_MODE = "ppo"
-    #STRATEGY_MODE = "ddpg"
-    #STRATEGY_MODE = "a2c"
-    # STRATEGY_MODE = "ens1" # ensemble base (weight 1 for the best agent, weight 0 for each other agent)
-    # STRATEGY_MODE = "ens2a" # ensemble weighted according to profitability, weights between 0 and 1
-    # STRATEGY_MODE = "ens2b" # ensemble weighted according to profitability, weights can be zero (short-selling an agent)
-    # STRATEGY_MODE = "ens3a" # ensemble weighted according to sharpe ratio, weights between 0 and 1
-    # STRATEGY_MODE = "ens3b" # ensemble weighted according to sharpe ratio, weights can be zero (short-selling an agent)
-    # if STRATEGY_MODE.find("ens") != -1:
-    # if substring is found in main string, do:...
-    # STRATEGY_MODE = None # only used for debugging (no models are run then)
+    #STRATEGY_MODE = "ppo"
+    STRATEGY_MODE = "ppoCustomBase"
 
-    REWARD_MEASURE = "addPFVal"
-    #REWARD_MEASURE = "logU"
-    #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days
+    REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
+    #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
+    #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure
 
-    #RUN_MODE = "st" # = "short",saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
-    RUN_MODE = "ext" # = "extended", when training again on the whole training dataset for each episode
-    # NOTE: the modes above should give the same results actually, if the correct seed
+    #RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
+    RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
 
     ### Set dates
     # train
-    STARTDATE_BACKTESTING = 20000101
-    ENDDATE_BACKTESTING = 20081231
     STARTDATE_TRAIN = 20090101 #20141001 #20090102  # Note: this is also the "global startdate"
     ENDDATE_TRAIN = 20151231   #20151001
     # validation (only needed for get_data_params in preprocessing)
@@ -57,28 +43,30 @@ class settings:
     # trading starts on:     # 2016/01/01 is the date that real trading starts
     #STARTDATE_TRADE = 20160104
     #ENDDATE_TRADE = None
+    # backtesting
+    STARTDATE_BACKTESTING = 20000101
+    ENDDATE_BACKTESTING = 20081231
 
-    ### set windows
-    # REBALANCE_WINDOW is the number of months to retrain the model
-    # VALIDATION_WINDOW is the number of months to validate the model and select the DRL agent for trading
+    ### set rollover window; since we are doing rolling window / extended window cross validation for time series
     # 63 days = 3 months of each 21 trading days (common exchanges don't trade on weekends, need to change for crypto)
     ROLL_WINDOW = 63
-    # this is basically a "step" period; we take a step of 63 days for which we extend the training window and move the validation and trade window
-    # todo: renamed to ROLL_WINDOW, was REBALANCE_WINDOW
     VALIDATION_WINDOW = 63
-    TRAINING_WINDOW = 63
-    TRADING_WINDOW = 63
+    TESTING_WINDOW = 63
 
     # ---------------LEAVE---------------
-    if STRATEGY_MODE == "ppo" or STRATEGY_MODE == "ddpg" or STRATEGY_MODE == "a2c":
-        AGENTS_LIST = [STRATEGY_MODE]
-
-    ### set random seeds;
+    ### define 10 randomly picked numbers to be used for seeding
     SEEDS_LIST = [0, 5, 23, 7774, 9090, 11112,  45252, 80923, 223445, 444110]
 
     ### returns current timestamp, mainly used for naming directories/ printout / logging to .txt
     NOW = datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
 
+    # this is going to be in the run folder name
+    if RETRAIN_DATA:
+        # if we retrain data, run modeis "long" (simply because it takes longer)
+        RUN_MODE = "lng" # for "long"
+    else:
+        # if we do not retrain data, run mode is short (the run takes less long)
+        RUN_MODE = "st" # for "short"
 
 class data_settings:
     """
@@ -113,104 +101,34 @@ class data_settings:
     ### PROVIDE NAMES OF ALL FEATURES / INDICATORS GIVEN DATASET COLUMN NAMES
     PRICE_FEATURES = [MAIN_PRICE_COLUMN]
     RETURNS_FEATURES = ["log_return_daily"]
-    TECH_INDICATORS = ["macd", "rsi_30", "cci_30", "dx_30", "volume"]  # was FEATURES_LIST
-    # TECH_INDICATORS = ["macd", "rsi", "cci", "adx"] # was FEATURES_LIST
+    TECH_INDICATORS = ["macd", "rsi_30", "cci_30", "dx_30", "volume"]
     RISK_INDICATORS = ["ret_vola_7d"] #["returns_volatility"]
-    ESG_INDICATORS = ["ESG"]
-    LSTM_INDICATORS = []
-    MARKET_INDICATORS = []
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    #FEATURES_MODE = "fm1"
-    FEATURES_MODE = "try"
+    FEATURES_MODE = "fm2"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
-        FEATURES_LIST = PRICE_FEATURES
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES
     elif FEATURES_MODE == "fm2":
-        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS
     elif FEATURES_MODE == "fm3":
-        FEATURES_LIST = PRICE_FEATURES + RISK_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + RISK_INDICATORS + TECH_INDICATORS
     elif FEATURES_MODE == "fm4":
-        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RISK_INDICATORS
-    elif FEATURES_MODE == "fm5":
-        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RISK_INDICATORS + RETURNS_FEATURES
-    elif FEATURES_MODE == "fm6":
-        FEATURES_LIST = RETURNS_FEATURES
-    elif FEATURES_MODE == "fm7":
-        FEATURES_LIST = RETURNS_FEATURES + TECH_INDICATORS
-    elif FEATURES_MODE == "fm8":
-        FEATURES_LIST = RETURNS_FEATURES + RISK_INDICATORS
-    elif FEATURES_MODE == "fm9":
-        FEATURES_LIST = RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
-    elif FEATURES_MODE == "fm10":
-        FEATURES_LIST = RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
-    elif FEATURES_MODE == "try": # just for debugging
-        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
+        pass
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
     # ---------------LEAVE---------------
-    HMAX_NORMALIZE = 100  # todo: up and check perf
+    HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
     INITIAL_CASH_BALANCE = 1000000
     TRANSACTION_FEE_PERCENT = 0.001  # todo: check reasonability: https://www.google.com/search?client=firefox-b-d&q=transaction+fee+for+stock+trading
     REWARD_SCALING = 1e-4  # This is 0.0001.
-    # shorting possiblity? # todo
 
 class agent_params:
     # ---------------SET MANUALLY---------------
-
-    # ---------------LEAVE---------------
-    class _a2c:
-        POLICY = 'MlpPolicy'
-        TRAINING_TIMESTEPS = 25000
-        # default values (given by stable-baselines)
-        LEARNING_RATE = 7e-4
-        N_STEPS = 5
-        GAMMA = 0.99
-        GAE_LAMBDA = 1.0
-        ENT_COEF = 0.0
-        VF_COEF = 0.5
-        MAX_GRAD_NORM = 0.5
-        RMS_PROP_EPS = 1E-5
-        USE_RMS_PROP = True
-        USE_SDE = False
-        SDE_SAMPLE_FREQ = -1
-        NORMALIZE_ADVANTAGE = False
-        TENSORBOARD_LOG = None# Optional
-        CREATE_EVAL_ENV = False
-        POLICY_KWARGS = None # optional
-        VERBOSE = 0
-        DEVICE = "auto"
-        INIT_SETUP_MODEL = True
-
-    class _ddpg:
-        """
-
-        """
-        POLICY = 'MlpPolicy'
-        # param_noise=param_noise, # todo: was in paper version, was None
-        ACTION_NOISE = "OUAN"  # OUAN for OhrsteinUhlenbeckActionNoise  # default: None
-        # default values (given by stable-baselines)
-        LEARNING_RATE = 1e-3
-        BUFFER_SIZE = int(1e6)
-        LEARNING_STARTS = 100
-        BATCH_SIZE = 100
-        TAU = 0.005
-        GAMMA = 0.99
-        TRAIN_FREQ = (1, "episode")
-        GRADIENT_STEPS = -1
-        OPTIMIZE_MEMORY_USAGE = True # Default: was False
-        TENSORBOARD_LOG = None
-        CREATE_EVAL_ENV = False
-        POLICY_KWARGS = None
-        VERBOSE = 0
-        DEVICE = "auto"
-        INIT_SETUP_MODEL = True
-        TRAINING_TIMESTEPS = 10000 # otherwise takes too long? if 100'000
-
-    class _ppo:
+    class ppo: # from stable baselines
         """
         POLICY          : policy network type, can be passed as str (if registered) or as instance,
                           e.g. if custom policy is used
@@ -260,28 +178,49 @@ class agent_params:
         """
         ##### FEATURE EXTRACTOR & POLICY & VALUE NETWORKS
         # multiple linear perceptrons
-        POLICY = 'MlpPolicy'
+        POLICY = 'MlpPolicy' # CustomMlp # CustomLSTM
 
         ##### HYPERPARAMETERS THAT NEED TO BEE TUNED
-        # entropy coefficient for the loss calculation; how much we weight the entropy in the loss
-        ENT_COEF = 0.005
-
+        # discount factor of returns: important because if high, future returns are discounted less and become more important
+        # if discount rate is low, the opposite
         GAMMA = 0.99
-        LEARNING_RATE = 3e-4
-        N_STEPS = 2048 # number of steps to run for one update of the (actor/critic) network parameters, default = 2048 # todo: ?
-                       # rollout buffer size = n_steps here (since only 1 environment used)
-                        # = n_rollout_steps
-        # BATCH_SIZE: Optional[int] = 64, # minibatch size
-        N_EPOCHS = 10 # Number of epoch when optimizing the network loss(es)
-        GAE_LAMBDA = 0.95
-        CLIP_RANGE_VF = None
+        # clipping range for the policy loss (actor);
+        # important because it ensures the new policy cannot be very different from the old one
+        # the smaller te clip range, the more conservative we are with our policy changes
         CLIP_RANGE = 0.2
+        # coefficient of value function (critic)
+        # this is the weight the loss of the value network has in the whole network architecture
+        # this is only relevant if we have a common network (part) for both critic (value function) and actor (policy function),
+        # else the policy loss reduces to the policy loss only and the value loss is separate as well
         VF_COEF = 0.5
+        # entropy coefficient for the loss calculation; how much we weight the entropy in the loss
+        # entropy is added to the combined loss to ensure some exploration, that we don't get too stuck in a local optimum
+        # if the entropy coefficient is too high, the agent might unlearn the things he learned to fast
+        # see also: https://www.reddit.com/r/reinforcementlearning/comments/i3i5qa/ppo_to_high_entropy_coefficient_makes_agent/
+        ENT_COEF = 0.005
+        # generalized advantage estimate smoothing factor, the larger, the smoother our estimates (less variance)
+        GAE_LAMBDA = 0.95
+
+        ### NOT TUNED
+        # BATCH_SIZE: Optional[int] = 64, # minibatch size for updating the network
+        # Number of epoch when optimizing the network loss(es)
+        N_EPOCHS = 10
+        # maximal radient normalization
         MAX_GRAD_NORM = 0.5
+        # number of timesteps that are collected into the buffer every time experience is collected
+        # (there is not much to tune here because we have a limited data set anyways)
+        N_STEPS = 2048
+        # optimizer (neural network, by default: Adam) learning rate
+        LEARNING_RATE = 3e-4 # not tuned because Adam already has some sort of adaptive learning rate and therefore is somewhat robust
+
+        ### DEFAULT PARAMETERS / extended parameters, set to False / not tuned for this thesis
+        CLIP_RANGE_VF = None # clipping range for the value function: as much as the policy loss can be clipped, the value function
+        # can also be clipped; this is an extension not in the paper though
+        # sde = state independent exploration, Fals eby default
         USE_SDE = False
         SDE_SAMPLE_FREQ = -1
         TARGET_KL = None
-        TENSORBOARD_LOG = "TB_LOG"
+        TENSORBOARD_LOG = None #"TB_LOG"
         CREATE_EVAL_ENV = False
         POLICY_KWARGS = None
         VERBOSE = 0
@@ -289,11 +228,40 @@ class agent_params:
         INIT_SETUP_MODEL = True
 
         ### HYPERPARAMETERS FOR PPO TRAINING
-        TRAINING_TIMESTEPS = 10000#100000 # todo: ?
+        # this is the number of total steps to be taken during training. The higher the number, the more often we are
+        # going to sample new batches of data and train on them. Doing this too often might lead to "overtraining",
+        # especially since we have a "fixed" stock market dataset. Doing too few steps might lead to te agent to
+        # not learn enough. Since we are working with a rolling / expanding training window, it would make sense to make
+        # the training time steps adaptive.
+        TRAINING_TIMESTEPS = 100000
+
+    class ppoCustomBase:
+        """
+        This class implements my own custom implementation of the PPO algorithm
+        """
+        ### SETUP PARAMETERS
+        # net architecture mode
+        NET_VERSION = "base"
+
+        ### HYPERPARAMETERS
+        BATCH_SIZE = 64
+        NUM_EPOCHS = 10
+        OPTIMIZER = torch.optim.Adam
+        OPTIMIZER_LEARNING_RATE = 0.00025
+        GAMMA = 0.99
+        GAE_LAMBDA = 0.95
+        CLIP_EPSILON = 0.2
+        MAX_KL_VALUE = None
+        CRITIC_LOSS_COEF = 0.5
+        ENTROPY_LOSS_COEF = 0.01
+        MAX_GRADIENT_NORMALIZATION = 0.5
+
+        ### LEARNING PARAMETERS
+        TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set at length of train / vaidation / test data = > length of one episode
+        TOTAL_TIMESTEPS_TO_TRAIN = 100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
 
 class paths:
     # ---------------LEAVE---------------
-
     # data paths
     DATA_PATH = "data"
     RAW_DATA_PATH = os.path.join(DATA_PATH, "raw")
@@ -309,55 +277,19 @@ class paths:
                        "rewards": "rewards",
                        "policy_actions": "policy_actions",
                        "exercised_actions": "exercised_actions",
+                       "portfolio_weights": "portfolio_weights",
                        "transaction_cost": "transaction_cost",
                        "number_asset_holdings": "number_asset_holdings",
                        "sell_trades": "sell_trades",
                        "buy_trades": "buy_trades",
-                       "crisis_measures": "crisis_measures",
-                       "crisis_thresholds": "crisis_thresholds",
-                       "crisis_selloff_cease_trading": "crisis_selloff_cease_trading",
                        "state_memory": "state_memory",
                        "last_state": "last_state",
+                       "backtest": "backtest",
+                       "training_performance": "training_performance",
                        }
-    # data files
-    TESTING_DATA_FILE = "test.csv"  # TODO: WHERE IS THIS FILE? rm
-    RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv")  # todo: was TRAINING_DATA_FILE
-    # ---------------LEAVE---------------
-    if data_settings.DATABASE == "WhartonDB" and data_settings.FEATURES_MODE == "fm1":
-        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, DATASET +".csv")
-    else:
-        PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{data_settings.COUNTRY}_stocks_"
-                                                                      f"{data_settings.DATABASE}_"
-                                                                      f"{data_settings.FEATURES_MODE}.csv")
-
-class crisis_settings:
-    """
-    Choose if you want to use a crisis measure (such as turbulence and other) to act as a stop loss in times of
-    turbulence.
-    Choose parameters and settings for your crisis measure of choice.
-    """
-
-    # ---------------SET MANUALLY---------------
-    CRISIS_MEASURE = None  # default
-    # CRISIS_MEASURE = "turbulence"
-    # CRISIS_MEASURE = "volatility"
+    # data files # todo: rm
+    #RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv")
 
     # ---------------LEAVE---------------
-    if CRISIS_MEASURE == "turbulence":
-        CNAME = "turb"
-        # CRISIS_THRESHOLD = 140  # turbulence threshold
-        # CRISIS_DATA = None  # path to pre-calculated data
-        CUTOFF_XPERCENTILE = .90
-        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
-    elif CRISIS_MEASURE == "volatility":
-        CNAME = "vola"
-        CUTOFF_XPERCENTILE = ""
-        # CRISIS_THRESHOLD = None  # turbulence threshold
-        # CRISIS_DATA = None
-        print("(config) crisis condition measure: {}".format(CRISIS_MEASURE))
-    elif CRISIS_MEASURE is None:
-        CNAME = ""
-        CUTOFF_XPERCENTILE = ""
-        print("(config) no crisis measure selected.")
-    else:
-        print("(config) ValueError: crisis measure selected unkNOWn and not None.")
+    PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{data_settings.COUNTRY}_stocks_"
+                                                                  f"{data_settings.DATABASE}.csv")

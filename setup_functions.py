@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from model.models_pipeline import *
+from model.run_pipeline import *
 from config.config import *
 from config.dataprep_config import *
 
@@ -46,7 +46,6 @@ def load_dataset(*,
 def create_dirs(mode: str = "run_dir", # "seed_dir"
                 results_dir: str = "",
                 trained_dir: str = "",
-                dummydata: bool = False,
                 ) -> list:
     # todo: create support_functions and move there
     """
@@ -59,26 +58,21 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
     @param trained_dir: name of trained models directory.
     @return:
     """
-    if dummydata:
-        results_path = os.path.join("dummyresults", "results")
-        trained_models_path = os.path.join("dummyresults", "trained_models")
-    else:
-        results_path = paths.RESULTS_PATH
-        trained_models_path = paths.TRAINED_MODELS_PATH
+    results_path = paths.RESULTS_PATH
+    trained_models_path = paths.TRAINED_MODELS_PATH
 
     if mode == "run_dir":
         ### RESULTY DIRECTORY
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
         results_dir = os.path.join(results_path,
                                    f"{settings.NOW}_{settings.STRATEGY_MODE}_"
-                                   f"{crisis_settings.CNAME}_{data_settings.FEATURES_MODE}"
+                                   f"{data_settings.FEATURES_MODE}"
                                    f"_{settings.RUN_MODE}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
 
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
         trained_dir = os.path.join(trained_models_path, f"{settings.NOW}"
                                                               f"_{settings.STRATEGY_MODE}"
-                                                              f"_{crisis_settings.CNAME}"
                                                               f"_rew_{settings.REWARD_MEASURE}"
                                                               f"_{data_settings.FEATURES_MODE}"
                                                               f"_{settings.RUN_MODE}")
@@ -88,17 +82,15 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
     if mode == "seed_dir":
         ### RESULTY SUBDIRECTORY
         # creating results sub-directory, one for each seed (for which the algorithm is run) within one run
-        results_subdir = os.path.join(results_dir, f"agentSeed{settings.SEED_AGENT}")
+        results_subdir = os.path.join(results_dir, f"agentSeed{settings.SEED}")
         os.makedirs(results_subdir)
         ### TRAINED MODEL SUBDIRECTORY
-        trained_subdir = os.path.join(trained_dir, f"agentSeed{settings.SEED_AGENT}")
+        trained_subdir = os.path.join(trained_dir, f"agentSeed{settings.SEED}")
         os.makedirs(trained_subdir)
 
         # creating sub-sub-directories for the actual results folders (e.g. portfolio_value etc.)
         # where the resulting .csv files are saved during the run
         # the names of the sub-sub-directories are defined in the config file under paths.SUBSUBDIR_NAMES
-        if crisis_settings.CRISIS_MEASURE is None and "crisis_measures" in paths.SUBSUBDIR_NAMES:
-            [paths.SUBSUBDIR_NAMES.pop(key) for key in ["crisis_measures", "crisis_thresholds", "crisis_selloff_cease_trading"]]
         for dirname in paths.SUBSUBDIR_NAMES.keys():
             subdir_path = os.path.join(results_subdir, dirname)
             os.makedirs(subdir_path)
@@ -130,13 +122,13 @@ def config_logging_to_txt(results_subdir,
                         f"NOW                  : {settings.NOW}\n"
                         f"SEEDS LIST           : {settings.SEEDS_LIST}\n"
                         f"STRATEGY_MODE        : {settings.STRATEGY_MODE}\n"
-                        f"AGENTS_LIST          : {settings.AGENTS_LIST}\n"
-                        f"ROLLING_WINDOW       : {settings.ROLL_WINDOW}\n"
-                        f"VALIDATION_WINDOW    : {settings.VALIDATION_WINDOW}\n"
+                        f"REWARD_MEASURE       : {settings.REWARD_MEASURE}\n"
+                        f"RETRAIN_DATA         : {settings.RETRAIN_DATA}\n"
+                        f"RUN_MODE             : {settings.RUN_MODE}\n"
                         f"STARTDATE_TRAIN      : {settings.STARTDATE_TRAIN}\n"
                         f"ENDDATE_TRAIN        : {settings.ENDDATE_TRAIN}\n"
-                       # f"STARTDATE_VALIDATION : {settings.STARTDATE_VALIDATION}\n"
-                       # f"ENDDATE_VALIDATION   : {settings.ENDDATE_VALIDATION}\n"
+                        f"ROLL_WINDOW          : {settings.ROLL_WINDOW}\n"
+
                         "------------------------------------\n"
                         f"ENVIRONMENT VARIABLES\n"
                         "------------------------------------\n"
@@ -147,12 +139,8 @@ def config_logging_to_txt(results_subdir,
                         "------------------------------------\n"
                         f"DATA PREPARATION SETTINGS\n"
                         "------------------------------------\n"
-                        f"FEATURES_LIST    : {data_settings.FEATURES_LIST}\n"
-                        f"FEATURES_MODE    : {data_settings.FEATURES_MODE}\n"
-                        "------------------------------------\n"
-                        f"CRISIS SETTINGS\n"
-                        "------------------------------------\n"
-                        f"CRISIS_MEASURE: {crisis_settings.CRISIS_MEASURE}\n"
+                        f"FEATURES_LIST            : {data_settings.FEATURES_LIST}\n"
+                        f"FEATURES_MODE            : {data_settings.FEATURES_MODE}\n"
                         "------------------------------------\n"
                         f"PATHS AND DIRECTORIES\n"
                         "------------------------------------\n"
@@ -162,121 +150,71 @@ def config_logging_to_txt(results_subdir,
                         f"TRAINED_MODELS_PATH      : {paths.TRAINED_MODELS_PATH}\n"
                         f"RESULTS_PATH             : {paths.RESULTS_PATH}\n"
                         f"SUBDIR_NAMES             : {paths.SUBSUBDIR_NAMES}\n"
-                        f"TESTING_DATA_FILE        : {paths.TESTING_DATA_FILE}\n" # todo: where is this file?
-                        f"RAW_DATA_FILE            : {paths.RAW_DATA_FILE}\n"
+                        #f"RAW_DATA_FILE            : {paths.RAW_DATA_FILE}\n"
                         f"PREPROCESSED_DATA_FILE   : {paths.PREPROCESSED_DATA_FILE}\n"
                         f"RESULTS_DIR              : {results_subdir}\n"
                         f"TRAINED_MODEL_DIR        : {trained_subdir}\n")  # trained_model_dir
-    for agent_ in settings.AGENTS_LIST:
-        with open(txtfile_path, "a") as text_file:
-            text_file.write("------------------------------------\n"
-                            f"AGENT PARAMETERS - - - {agent_.upper()}\n"
-                            "------------------------------------\n")
-        if agent_ == "ppo":
+        if settings.STRATEGY_MODE == "ppoCustomBase":
             with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._ppo.POLICY}\n"
-                                f"ent_coef           : {agent_params._ppo.ENT_COEF}\n"
+                text_file.write(f"NET_VERSION                   : {agent_params.ppoCustomBase.NET_VERSION}\n"
+                                f"BATCH_SIZE                    : {agent_params.ppoCustomBase.BATCH_SIZE}\n"
+                                f"NUM_EPOCHS                    : {agent_params.ppoCustomBase.NUM_EPOCHS}\n"
+                                f"OPTIMIZER                     : {agent_params.ppoCustomBase.OPTIMIZER}\n"
+                                f"OPTIMIZER_LEARNING_RATE       : {agent_params.ppoCustomBase.OPTIMIZER_LEARNING_RATE}\n"
+                                f"GAMMA                         : {agent_params.ppoCustomBase.GAMMA}\n"
+                                f"GAE_LAMBDA                    : {agent_params.ppoCustomBase.GAE_LAMBDA}\n"
+                                f"CLIP_EPSILON                  : {agent_params.ppoCustomBase.CLIP_EPSILON}\n"
+                                f"MAX_KL_VALUE                  : {agent_params.ppoCustomBase.MAX_KL_VALUE}\n"
+                                f"CRITIC_LOSS_COEF              : {agent_params.ppoCustomBase.CRITIC_LOSS_COEF}\n"
+                                f"ENTROPY_LOSS_COEF             : {agent_params.ppoCustomBase.ENTROPY_LOSS_COEF}\n"
+                                f"MAX_GRADIENT_NORMALIZATION    : {agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION}\n"
+                                f"TOTAL_TIMESTEPS_TO_COLLECT    : {agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT}\n"
+                                f"TOTAL_TIMESTEPS_TO_TRAIN      : {agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN}\n"
+                                )
+        if settings.STRATEGY_MODE == "ppo":
+            with open(txtfile_path, "a") as text_file:
+                text_file.write(f"POLICY             : {agent_params.ppo.POLICY}\n"
+                                f"ENT_COEF           : {agent_params.ppo.ENT_COEF}\n"
+                                f"GAMMA              : {agent_params.ppo.GAMMA}\n"
+                                f"LEARNING_RATE      : {agent_params.ppo.LEARNING_RATE}\n"
+                                f"N_STEPS (buffer)   : {agent_params.ppo.N_STEPS}\n"
+                                f"BATCH_SIZE         : Optional[int] = 64\n"
+                                f"N_EPOCHS           : {agent_params.ppo.N_EPOCHS}\n"
+                                f"GAE_LAMBDA         : {agent_params.ppo.GAE_LAMBDA}\n"
+                                f"CLIP_RANGE         : {agent_params.ppo.CLIP_RANGE}\n"
+                                f"VF_COEF            : {agent_params.ppo.VF_COEF}\n"
                                 f"default parameters (unchanged from default as given by stable-baselines):"
-                                f"gamma              : {agent_params._ppo.GAMMA}\n"
-                                f"learning_rate      : {agent_params._ppo.LEARNING_RATE}\n"
-                                f"n_steps            : {agent_params._ppo.N_STEPS}\n"
-                                f"batch_size         : Optional[int] = 64\n"
-                                f"n_epochs           : {agent_params._ppo.N_EPOCHS}\n"
-                                f"gae_lambda         : {agent_params._ppo.GAE_LAMBDA}\n"
-                                f"clip_range_vf      : {agent_params._ppo.CLIP_RANGE_VF}\n"
-                                f"clip_range         : {agent_params._ppo.CLIP_RANGE}\n"
-                                f"vf_coef            : {agent_params._ppo.VF_COEF}\n"
-                                f"max_grad_norm      : {agent_params._ppo.MAX_GRAD_NORM}\n"
-                                f"use_sde            : {agent_params._ppo.USE_SDE}\n"
-                                f"sde_sample_freq    : {agent_params._ppo.SDE_SAMPLE_FREQ}\n"
-                                f"target_kl          : {agent_params._ppo.TARGET_KL}\n"
-                                f"tensorboard_log    : {agent_params._ppo.TENSORBOARD_LOG}\n"
-                                f"create_eval_env    : {agent_params._ppo.CREATE_EVAL_ENV}\n"
-                                f"policy_kwargs      : {agent_params._ppo.POLICY_KWARGS}\n"
-                                f"verbose            : {agent_params._ppo.VERBOSE}\n"
-                                f"device             : {agent_params._ppo.DEVICE}\n"
-                                f"init_setup_model   : {agent_params._ppo.INIT_SETUP_MODEL}\n"
-                                f"TRAINING_TIMESTEPS : {agent_params._ppo.TRAINING_TIMESTEPS}\n")
-        elif agent_ == "ddpg":
-            with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._ddpg.POLICY}\n"
-                                f"action_noise       : {agent_params._ddpg.ACTION_NOISE}\n"
-                                f"default parameters (unchanged from default as given by stable-baselines):"
-                                f"gamma              : {agent_params._ddpg.GAMMA}\n"
-                                f"learning_rate      : {agent_params._ddpg.LEARNING_RATE}\n"
-                                f"buffer_size        : {agent_params._ddpg.BUFFER_SIZE}\n"
-                                f"learning_starts    : {agent_params._ddpg.LEARNING_STARTS}\n"
-                                f"batch_size         : {agent_params._ddpg.BATCH_SIZE}\n"
-                                f"tau                : {agent_params._ddpg.TAU}\n"
-                                f"gradient_steps     : {agent_params._ddpg.GRADIENT_STEPS}\n"
-                                f"optimize_memory_usage : {agent_params._ddpg.OPTIMIZE_MEMORY_USAGE}\n"
-                                f"tensorboard_log    : {agent_params._ddpg.TENSORBOARD_LOG}\n"
-                                f"create_eval_env    : {agent_params._ddpg.CREATE_EVAL_ENV}\n"
-                                f"policy_kwargs      : {agent_params._ddpg.POLICY_KWARGS}\n"
-                                f"verbose            : {agent_params._ddpg.VERBOSE}\n"
-                                f"device             : {agent_params._ddpg.DEVICE}\n"
-                                f"init_setup_model   : {agent_params._ddpg.INIT_SETUP_MODEL}\n"
-                                f"TRAINING_TIMESTEPS : {agent_params._ddpg.TRAINING_TIMESTEPS}\n")
-        elif agent_ == "a2c":
-            with open(txtfile_path, "a") as text_file:
-                text_file.write(f"policy             : {agent_params._a2c.POLICY}\n"
-                                f"ent_coef           : {agent_params._a2c.ENT_COEF}\n"
-                                f"vf_coef            : {agent_params._a2c.VF_COEF}\n"
-                                f"learning_rate      : {agent_params._a2c.LEARNING_RATE}\n"
-                                f"gamma              : {agent_params._a2c.GAMMA}\n"
-                                f"gae_lambda         : {agent_params._a2c.GAE_LAMBDA}\n"
-                                f"max_grad_norm      : {agent_params._a2c.MAX_GRAD_NORM}\n"
-                                f"rms_prop_eps       : {agent_params._a2c.RMS_PROP_EPS}\n"
-                                f"use_rms_prop       : {agent_params._a2c.USE_RMS_PROP}\n"
-                                f"n_steps            : {agent_params._a2c.N_STEPS}\n"
-                                f"use_sde            : {agent_params._a2c.USE_SDE}\n"
-                                f"sde_sample_freq    : {agent_params._a2c.SDE_SAMPLE_FREQ}\n"
-                                f"normalize_advantage: {agent_params._a2c.NORMALIZE_ADVANTAGE}\n"
-                                f"tensorboard_log    : {agent_params._a2c.TENSORBOARD_LOG}\n"
-                                f"create_eval_env    : {agent_params._a2c.CREATE_EVAL_ENV}\n"
-                                f"policy_kwargs      : {agent_params._a2c.POLICY_KWARGS}\n"
-                                f"verbose            : {agent_params._a2c.VERBOSE}\n"
-                                f"device             : {agent_params._a2c.DEVICE}\n"
-                                f"init_setup_model   : {agent_params._a2c.INIT_SETUP_MODEL}\n"
-                                f"TRAINING_TIMESTEPS : {agent_params._a2c.TRAINING_TIMESTEPS}\n")
+                                f"MAX_GRAD_NORM      : {agent_params.ppo.MAX_GRAD_NORM}\n"
+                                f"CLIP_RANGE_VF      : {agent_params.ppo.CLIP_RANGE_VF}\n"
+                                f"USE_SDE            : {agent_params.ppo.USE_SDE}\n"
+                                f"SDE_SAMPLE_FREQ    : {agent_params.ppo.SDE_SAMPLE_FREQ}\n"
+                                f"TARGET_KL          : {agent_params.ppo.TARGET_KL}\n"
+                                f"TENSORBOARD_LOG    : {agent_params.ppo.TENSORBOARD_LOG}\n"
+                                f"CREATE_EVAL_ENV    : {agent_params.ppo.CREATE_EVAL_ENV}\n"
+                                f"POLICY_KWARGS      : {agent_params.ppo.POLICY_KWARGS}\n"
+                                f"VERBOSE            : {agent_params.ppo.VERBOSE}\n"
+                                f"DEVICE             : {agent_params.ppo.DEVICE}\n"
+                                f"INIT_SETUP_MODEL   : {agent_params.ppo.INIT_SETUP_MODEL}\n"
+                                f"TRAINING_TIMESTEPS : {agent_params.ppo.TRAINING_TIMESTEPS}\n")
     return None
 
 
-def run_model_pipeline(data,
-              results_dir,
-              trained_dir,
-              TB_log_dir,
-              stock_dim,
-              n_features,
-              shape_observation_space,
-              #unique_trade_dates_validation
-              ) -> None:
+def get_data_params(final_df: pd.DataFrame,
+                    feature_cols=data_settings.FEATURES_LIST,
+                    asset_name_column="tic",
+                    ) -> list:
     """
-    Runs the whole setup: training, validation, trading
+    Get some parameters we need, based on the final pre-processed dataset:
+        number of individual assets (n_individual_assets)
+        number of features used (n_features)
+        unique trade dates within the wished validation (or other) subset (unique_trade_dates)
+    @param final_df:
+    @param asset_name_column:
+    @return:
     """
-    # CHOOSE MODEL TO RUN
-    # -------
-    # if we don't run an ensemble strategy, we run the single agent strategy
-    if settings.STRATEGY_MODE.find("ens") == -1:
-        #logging.warning(f"(RUN) STRATEGY_MODE: {settings.STRATEGY_MODE}.")
-        # Single Agent Only; call function in "models.py"
-        run_model(df=data,
-                  results_dir=results_dir,
-                  trained_dir=trained_dir,
-                  TB_log_dir=TB_log_dir,
-                  stock_dim=stock_dim,
-                  n_features=n_features,
-                  shape_observation_space=shape_observation_space,
-                  #unique_trade_dates_validation=unique_trade_dates_validation
-                    )
-    elif settings.STRATEGY_MODE.find("ens") != -1:
-    #logging.warning(f"(RUN) STRATEGY_MODE: {settings.STRATEGY_MODE}.")
-        #run_ensemble(df=data,
-         #            REBALANCE_WINDOW=settings.REBALANCE_WINDOW,
-         #            validation_window=settings.VALIDATION_WINDOW,
-         #            strategy_mode=settings.STRATEGY_MODE,
-         #            crisis_measure=crisis_settings.CRISIS_MEASURE)
-        pass
-    else:
-        logging.warning(f"(RUN) STRATEGY_MODE is not specified ({settings.STRATEGY_MODE}).")
-        pass
+    df = final_df.copy()
+    n_individual_assets = len(df[asset_name_column].unique())
+    n_features = len(feature_cols)
+
+    return [n_individual_assets, n_features]
+
