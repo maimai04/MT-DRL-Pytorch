@@ -3,6 +3,7 @@ from setup_functions import *
 from model.run_pipeline import *
 import os
 import numpy as np
+import random
 
 """
 run only PPO
@@ -33,14 +34,6 @@ if __name__ == "__main__":
     # write all parameters from config.py file into the config_log.txt file in folder _LOGGING
     # so later this file can be consulted to uniquely identify each run and its configurations
     config_logging_to_txt(results_dir, trained_dir, logsave_path=logsave_path)
-    logging.basicConfig(filename=os.path.join(logsave_path, "run_log"),
-                        filemode='a',
-                        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                        # asctime = time, msecs, name = name of who runned it (?), levelname (e.g. DEBUG, INFO => verbosity), message
-                        datefmt='%H:%M:%S',
-                        #level=logging.INFO
-                        #level=logging.DEBUG
-                        level=logging.NOTSET)
 
     #### LOAD PREPROCESSED DATA
     ####-------------------------------
@@ -64,12 +57,6 @@ if __name__ == "__main__":
     data = data.sort_values([data_settings.DATE_COLUMN, data_settings.ASSET_NAME_COLUMN])
     data.index = data[data_settings.DATE_COLUMN].factorize()[0]
 
-    # loggings (these are all saved in the _LOGGINGS folder of the whole run
-    logging.info("(main) FINAL INPUT DATAFRAME")
-    logging.info("---------------------------------------------------------")
-    logging.info(data.head(3))
-    logging.info(f"(main) Shape of Dataframe (unique dates, columns) : ({len(data.index.unique())}, {len(data.columns)})")
-
     # get parameters about dataframe shape (we need this information to feed it to the environment later)
     assets_dim, n_features = \
         get_data_params(final_df=data,
@@ -82,13 +69,8 @@ if __name__ == "__main__":
     # Shape = [Current Balance]+[prices 1-30]+[owned shares 1-30] +[macd 1-30]+ [rsi 1-30] + [cci 1-30] + [adx 1-30]
     shape_observation_space = n_features * assets_dim + assets_dim + 1  # +1 for cash
 
-    #logging.info("(main) number of validation trading dates: " + str(len(unique_trade_dates_validation)))
-    logging.info("(main) shape observation space: "+str(shape_observation_space))
-    logging.info(f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
-    #logging.info(f"(main) unique_trade_dates_validation[0] = {str(unique_trade_dates_validation[0])}\n ")
-
-    # we want to be able to summarize some metrics / erformance metrics and plot some plots
-    # for all seeds together (e.g. make a plot of chages in portfolio value vs. time for each seed in order to compare,
+    # we want to be able to summarize some metrics / üerformance metrics and plot some plots
+    # for all seeds together (e.g. make a plot of changes in portfolio value vs. time for each seed in order to compare,
     # and calculate medium reward, max. drawdown for all seeds, sharpe ratio
     # and because I have to run many runs, I don't want to do this separately for every run by hand
     # However, that also means that the whole run is going to take a little longer (since there will be a small time loss
@@ -102,14 +84,37 @@ if __name__ == "__main__":
     for seed in settings.SEEDS_LIST:
         run_count += 1
         settings.SEED = seed
-
         # set some seeds
-        torch.manual_seed(seed)
-        np.random.seed(seed)
+        #torch.manual_seed(seed)
+        #np.random.seed(seed)
+        #random.seed(seed)
+        #torch.cuda.manual_seed(seed)
+        #torch.backends.cudnn.deterministic = True
+
+        logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
+                            filemode='a',
+                            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            # asctime = time, msecs, name = name of who runned it (?), levelname (e.g. DEBUG, INFO => verbosity), message
+                            datefmt='%H:%M:%S',
+                            # level=logging.INFO
+                            # level=logging.DEBUG
+                            level=logging.NOTSET)
 
         logging.info("\n#################################################################")
         logging.info(f"### (main) RUN {str(run_count)} --- AGENT SEED: {str(settings.SEED)}")
         logging.info("#################################################################")
+
+        # loggings (these are all saved in the _LOGGINGS folder of the whole run
+        logging.info("(main) FINAL INPUT DATAFRAME")
+        logging.info("---------------------------------------------------------")
+        logging.info(data.head(3))
+        logging.info(
+            f"(main) Shape of Dataframe (unique dates, columns) : ({len(data.index.unique())}, {len(data.columns)})")
+        # logging.info("(main) number of validation trading dates: " + str(len(unique_trade_dates_validation)))
+        logging.info("(main) shape observation space: " + str(shape_observation_space))
+        logging.info(
+            f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
+        # logging.info(f"(main) unique_trade_dates_validation[0] = {str(unique_trade_dates_validation[0])}\n ")
 
         #### SETUP
         ####------------------------------

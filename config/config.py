@@ -30,8 +30,8 @@ class settings:
     #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure
 
-    #RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
-    RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
+    RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
+    #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
 
     ### Set dates
     # train
@@ -233,7 +233,7 @@ class agent_params:
         # especially since we have a "fixed" stock market dataset. Doing too few steps might lead to te agent to
         # not learn enough. Since we are working with a rolling / expanding training window, it would make sense to make
         # the training time steps adaptive.
-        TRAINING_TIMESTEPS = 100000
+        TRAINING_TIMESTEPS = 10000 #100000
 
     class ppoCustomBase:
         """
@@ -250,7 +250,7 @@ class agent_params:
         OPTIMIZER_LEARNING_RATE = 0.00025
         GAMMA = 0.99
         GAE_LAMBDA = 0.95
-        CLIP_EPSILON = 0.2
+        CLIP_EPSILON = 0.1#0.5#0.2
         MAX_KL_VALUE = None
         CRITIC_LOSS_COEF = 0.5
         ENTROPY_LOSS_COEF = 0.01
@@ -258,7 +258,7 @@ class agent_params:
 
         ### LEARNING PARAMETERS
         TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set at length of train / vaidation / test data = > length of one episode
-        TOTAL_TIMESTEPS_TO_TRAIN = 100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
+        TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
 
 class paths:
     # ---------------LEAVE---------------
@@ -277,7 +277,8 @@ class paths:
                        "rewards": "rewards",
                        "policy_actions": "policy_actions",
                        "exercised_actions": "exercised_actions",
-                       "portfolio_weights": "portfolio_weights",
+                       "asset_equity_weights": "asset_equity_weights",
+                       "all_weights_cashAtEnd": "all_weights_cashAtEnd",
                        "transaction_cost": "transaction_cost",
                        "number_asset_holdings": "number_asset_holdings",
                        "sell_trades": "sell_trades",

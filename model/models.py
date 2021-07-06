@@ -3,6 +3,7 @@ import time
 from stable_baselines3 import PPO
 from stable_baselines3.ppo.policies import MlpPolicy
 import gym
+import math
 
 # own libraries
 import logging
@@ -27,7 +28,8 @@ def get_model(train_environment,
               train_env_firstday: int=0,
               val_env_firstday: int=0,
               load_trained_model: bool=False,
-              trained_model_save_path: str=None):
+              trained_model_save_path: str=None,
+              current_episode_number: str=None):
 
     if strategy_mode == "ppoCustomBase":
         # if we use my custom PPO algorithm, we first need to create an instance of some of the components,
@@ -45,14 +47,23 @@ def get_model(train_environment,
         if load_trained_model:
             # loading trained model to brain
             brain.load_state_dict(torch.load(trained_model_save_path))
-        buffer = OnPolicyBuffer(buffer_size=number_train_data_points,
+        # NOTE: the buffer size is the number of available training points (because these we want to store)
+        # but we also want to update the model in mini batches, e..g of size 84 (by default),
+        # and then the buffer size should b a multiple of the batch size because otherwise the last data batch,
+        # which is not as long as batch:size, would be ignored.
+        # instead, the last batch is just joing to have some zero padding at the end so that it will stil be of the same length
+        buffer_size = max(number_train_data_points,
+                          math.ceil(number_train_data_points / agent_params.ppoCustomBase.BATCH_SIZE) * agent_params.ppoCustomBase.BATCH_SIZE)
+        logging.info(f"buffer size:  {buffer_size}")
+        logging.info(f"number of train data points passed: {number_train_data_points}")
+        buffer = OnPolicyBuffer(buffer_size=buffer_size,
                                 obs_shape=(shape_observation_space,),
                                 actions_number=assets_dim)
         model = PPO_algorithm(env_train=train_environment,
                               env_validation=validation_environment,
                               brain=brain,
                               buffer=buffer,
-                              batch_size=agent_params.ppoCustomBase.BATCH_SIZE,
+                              batch_size=agent_params.ppoCustomBase.BATCH_SIZE, # note: batch size is changed if train data is < batch_size
                               num_epochs=agent_params.ppoCustomBase.NUM_EPOCHS,
                               gamma=agent_params.ppoCustomBase.GAMMA,
                               gae_lambda=agent_params.ppoCustomBase.GAE_LAMBDA,
@@ -63,6 +74,7 @@ def get_model(train_environment,
                               max_gradient_normalization=agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION,
                               total_timesteps_to_collect=agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT,
                               performance_save_path=performance_save_path,
+                              current_episode=current_episode_number,
                               train_env_firstday=train_env_firstday,
                               val_env_firstday=val_env_firstday)
     elif strategy_mode == "ppo":

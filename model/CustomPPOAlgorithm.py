@@ -8,7 +8,7 @@ import logging
 try:
     from config.config import *
 except:
-    from config.py import *
+    from config import *
 from model.CustomOnPolicyBuffer import OnPolicyBuffer
 from model.CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
     init_weights_actor_net, init_weights_feature_extractor_net, init_weights_critic_net
@@ -36,6 +36,7 @@ class PPO_algorithm():
                  buffer,
                  # path where loss curves etc. are saved
                  performance_save_path: str,
+                 current_episode: int,
                  # optional validation env for e.g. early stopping based on average reward
                  env_validation=None,
                  # params for neural network
@@ -61,7 +62,7 @@ class PPO_algorithm():
                  # we have reached the end of the data set.
                  total_timesteps_to_collect: int=5000,
                  train_env_firstday: int=0,
-                 val_env_firstday: int=0
+                 val_env_firstday: int=0,
                  ):
         """
         Here, the variables and hyperparameters are initialized.
@@ -96,6 +97,7 @@ class PPO_algorithm():
         self.total_timesteps_to_collect = total_timesteps_to_collect
 
         self.performance_save_path = performance_save_path
+        self.current_episode = current_episode
 
     def _collect_experiences_to_buffer(self, total_timesteps_to_collect):
         """
@@ -113,7 +115,7 @@ class PPO_algorithm():
         "b" stands for "buffer"
         """
         # get first state / observation from the environment by resetting it
-        logging.info("enffirstday: ", self.Env_firstday)
+        logging.info("enffirstday: "+str(self.Env_firstday))
         obs = self.Env.reset(day=self.Env_firstday, initial=True)
         #logging.info("train env reset, first obs: ", obs)
         #logging.info("data ", self.Env.data)
@@ -187,9 +189,10 @@ class PPO_algorithm():
             current_timesteps_collected += 1
 
             # if done = True, we have reached the end of our data set and we break the
-            # loop. This applies if total_rb_timesteps have been set higher than the actually
+            # loop. This applies if total_timesteps_to_collect have been set higher than the actually
             # available time steps in the data set
-            if current_timesteps_collected in list(range(1, total_timesteps_to_collect, 1000)):
+            if current_timesteps_collected in list(range(0, total_timesteps_to_collect, 1000)) + \
+                    [total_timesteps_to_collect]:
                 logging.info(f"current timesteps collected: {current_timesteps_collected + 1} / max. {total_timesteps_to_collect}")
                 # logging.info("\nactions before clipping: ")
                 # logging.info(actions)
@@ -199,9 +202,8 @@ class PPO_algorithm():
                 # logging.info(actions_log_prob)
                 # logging.info(f"\nvalue estimate: {V_estimate}")
                 #logging.info(f"\nreward : {reward}")
-                logging.info("saved old log probs: ")
-                logging.info(actions_log_prob)
-
+                #logging.info("saved old log probs: ")
+                #logging.info(actions_log_prob)
             if done:
                 logging.info("experience collection finished (because episode finished  (done)). ")
                 break
@@ -244,9 +246,11 @@ class PPO_algorithm():
         learning_timesteps_done = 0
         # we do this until we have learned for total_learning_timesteps
 
-        # initialize empty list
-        train_losses = []
-        train_rewards = []
+        # for saving later
+        suffix = "epoch_"
+        epoch_colnames = [suffix + str(s) for s in list(range(1, self.num_epochs + 1))]
+
+        # at the end of every 10 epochs, validation rewards are calculated on the holdout data set
         validation_rewards = []
 
         while learning_timesteps_done < total_learning_timesteps:
@@ -255,32 +259,56 @@ class PPO_algorithm():
             # collect experience in the environment based on the current policy and store in buffer
             self._collect_experiences_to_buffer(total_timesteps_to_collect=self.total_timesteps_to_collect)
 
-            # initilaize emtpy lists
-            epoch_loss = []
+            # initialize emtpy lists for storing parameters / performance metrics over epochs
+            # every batch parameter is going to be appended to these lists
+            prob_ratio_all_epochs = []
+            surr_loss_1_all_epochs = []
+            surr_loss_2_all_epochs = []
+            surr_loss_all_epochs = []
+            actor_loss_all_epochs = []
+            critic_loss_all_epochs = []
+            entropy_loss_all_epochs = []
+            combined_loss_all_epochs = []
+            advantages_all_epochs = []
 
             # now we train for multiple epochs
             for epoch in range(1, self.num_epochs + 1):
                 logging.info(f"---EPOCH: {epoch} / {self.num_epochs}")
 
+                # every batch parameter is going to be appended to these lists
+                prob_ratio_of_epoch = []
+                surr_loss_1_of_epoch = []
+                surr_loss_2_of_epoch = []
+                surr_loss_of_epoch = []
+                actor_loss_of_epoch = []
+                critic_loss_of_epoch = []
+                entropy_loss_of_epoch = []
+                combined_loss_of_epoch = []
+                advantages_of_epoch = []
+
                 # get batch from each tensor of batches
                 # Note: normally, "batch" means the whole training data, here
                 # with "batch" I actually ean "minibatch", but I write "batch" because it is shorter
                 start_idx = 0
-                for batch_num, batch_idx in enumerate(range(self.batch_size, self.buffer_size, self.batch_size)):
+                for batch_num, batch_idx in enumerate(range(self.batch_size, self.buffer_size+1, self.batch_size)):
                     # note: must convert to torch tensor because otherwise error
                     batch_obs = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["obs"][start_idx:batch_idx], dtype=torch.float)
                     batch_actions = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["actions"][start_idx:batch_idx], dtype=torch.float)
                     batch_actions_log_probs = torch.tensor(self.OnPolicyBuffer.trajectory_dict["actions_log_probs"][start_idx:batch_idx].flatten(), dtype=torch.float)
-                    batch_rewards = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["rewards"][start_idx:batch_idx].flatten(), dtype=torch.float)
+                    #batch_rewards = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["rewards"][start_idx:batch_idx].flatten(), dtype=torch.float)
                     batch_returns = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["returns"][start_idx:batch_idx].flatten(), dtype=torch.float)
                     #batch_V_estimates = torch.tensor(self.OnPolicyBuffer.trajectory_dict["value_estimates"][start_idx:batch_idx])  #
                     batch_advantages = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["advantage_estimates"][start_idx:batch_idx].flatten(), dtype=torch.float)  #
-                    start_idx += batch_size
+                    start_idx += self.batch_size
 
                     logging.info(f"BATCH NUMBER: {batch_num + 1}")
-                    if batch_num == 1:
-                        logging.info("getting old log probs as batch: ")
-                        logging.info(batch_actions_log_probs)
+                    if epoch == 1 and start_idx == 0:
+                        logging.info(f"sample batch (observations), (len: {len(batch_obs)})")
+                        logging.info(batch_obs)
+
+                    #if batch_num == 1:
+                        #logging.info("getting old log probs as batch: ")
+                        #logging.info(batch_actions_log_probs)
                     #logging.info("batch_obs")
                     #logging.info(batch_obs)
                     #logging.info("batch_actions")
@@ -291,9 +319,6 @@ class PPO_algorithm():
                     #logging.info(batch_returns)
                     #logging.info("batch_advantages")
                     #logging.info(batch_advantages)
-
-                    # update the number of training steps done by the length of the batch
-                    learning_timesteps_done += len(batch_rewards)
 
                     # Standardizing advantage estimates (creating z-score) across each batch
                     # (not in the paper)
@@ -327,39 +352,41 @@ class PPO_algorithm():
                     # logging.info(current_action_new_log_prob)
                     # logging.info("action log probs: " )
                     # logging.info(batch_actions_log_probs)
-                    logging.info("action new log prob:")
-                    logging.info(current_action_new_log_prob)
-                    logging.info("action old log prob:")
-                    logging.info(batch_actions_log_probs)
+                    #logging.info("action new log prob:")
+                    #logging.info(current_action_new_log_prob)
+                    #logging.info("action old log prob:")
+                    #logging.info(batch_actions_log_probs)
 
                     proba_ratio = torch.exp(current_action_new_log_prob - batch_actions_log_probs)
-                    logging.info("proba ration: ")
-                    logging.info(proba_ratio)
+                    #logging.info("proba ration: ")
+                    #logging.info(proba_ratio)
                     # in the first iteration (before first policy update),
                     # the ratio should be 1, since we will sample the same actions with the same net weights every time
                     ###  ACTOR LOSS (POLICY LOSS, SURROGATE LOSS)
                     # r * A
                     surr_loss_1 = proba_ratio * advantage_est_standardized
-                    logging.info("surr loss 1: ", surr_loss_1)
-                    logging.info(surr_loss_1)
+                    #logging.info("surr loss 1: ", surr_loss_1)
+                    #logging.info(surr_loss_1)
 
                     # clipped_r * A
                     surr_loss_2 = torch.clamp(proba_ratio,
                                               min=1 - self.clip_epsilon,
                                               max=1 + self.clip_epsilon) * advantage_est_standardized
-                    logging.info("surr loss 2: ")
-                    logging.info(surr_loss_2)
+                    #logging.info("surr loss 2: ")
+                    #logging.info(surr_loss_2)
 
                     # Note: because we will use gradient descent, not gradient Ascent, we need to take the negative of the surrogate function
                     # (in the paper, they maximize the (non-negative) surrogate function / loss with Gradient ascent)
                     surr_loss = torch.min(surr_loss_1, surr_loss_2)
-                    logging.info("surr loss: ")
-                    logging.info(surr_loss)
+                    #logging.info("surr loss: ")
+                    #logging.info(surr_loss)
 
-                    # calculate the clipped surrogate los (=a ctor loss / policy network loss)
+                    # calculate the clipped surrogate los (=actor loss / policy network loss)
+                    # since the actor loss in the paper is actually defined as "actor gain", so we would have to maximize it with
+                    # gradient ascent; but here we want to use gradient descent so we will take the negative of the surrogate loss mean
                     actor_loss = torch.mean(-surr_loss)
-                    logging.info("actor loss: ")
-                    logging.info(actor_loss)
+                    #logging.info("actor loss: ")
+                    #logging.info(actor_loss)
 
                     ### CRITIC LOSS (VALUE LOSS)
                     # Value loss using the TD(gae_lambda) target in the calculation of the returns (hence more smooth, less variance)
@@ -371,21 +398,22 @@ class PPO_algorithm():
                     # we need to flatten the new value estimates, because its a tensor like this: [[v1],[v1], ...]
                     # and we need it to be like this: [v1,v2,...] (rewards are also like this), else we et an error below
                     new_V_estimate = new_V_estimate.flatten()
+                    # Note: since critic loss = MSE loss (mean squared error), it is always going to be positive
                     critic_loss = nn.functional.mse_loss(new_V_estimate, batch_returns)  # returns used as target value
-                    logging.info("critic loss: ")
-                    logging.info(critic_loss)
+                    #logging.info("critic loss: ")
+                    #logging.info(critic_loss)
 
                     ### ENTROPY LOSS
                     entropy_loss = -torch.mean(action_distr_entropy)
-                    logging.info("entropy loss: ")
-                    logging.info(entropy_loss)
+                    #logging.info("entropy loss: ")
+                    #logging.info(entropy_loss)
 
                     # TOTAL LOSS FUNCTION:
                     # Note: the total loss for gradient ascent would be: actor_loss - c1*critic_loss + c2*entropy_loss,
                     # but since we do gradient descent, actor_loss and entropy loss are negative, value loss is positive (opposite signs)
                     total_loss = actor_loss + self.critic_loss_coef * critic_loss + self.entropy_loss_coef * entropy_loss
-                    logging.info("total loss:")
-                    logging.info(total_loss)
+                    #logging.info("total loss:")
+                    #logging.info(total_loss)
 
                     # UPDATING THE ACTOR-CRITIC MODEL (Updates policy, feature extractor and value network)
                     # Note: we first need to call zero_grad() on the optimizer, in order to clear all the gradients from the previous iteration,
@@ -403,44 +431,96 @@ class PPO_algorithm():
                     torch.nn.utils.clip_grad_norm_(self.Brain.parameters(), self.max_gradient_normalization)
                     self.Brain.optimizer.step()
 
-                    # after each minibatch update, append batch loss to epoch loss list
-                    epoch_loss.append(total_loss.detach().numpy())
+                    # AT THE END OF EACH BATCH:
+                    # append metrics
+                    # metrics that come as a multi-dim tensor per batch (one entry per observation in batch)
+                    # each of length batch_size (e.g. 64)
+                    # => list of lists => flatten list so that we get only a list of values, one for each obs
+                    prob_ratio_of_epoch.append(np.array(proba_ratio.detach()).flatten())
+                    surr_loss_1_of_epoch.append(np.array(surr_loss_1.detach()).flatten())
+                    surr_loss_2_of_epoch.append(np.array(surr_loss_2.detach()).flatten())
+                    surr_loss_of_epoch.append(np.array(surr_loss.detach()).flatten())
+                    advantages_of_epoch.append(np.array(advantage_est_standardized.detach()).flatten())
+                    # metrics that come as single values per batch (each of length 1)
+                    # => list of values
+                    actor_loss_of_epoch.append(actor_loss.detach())
+                    critic_loss_of_epoch.append(critic_loss.detach())
+                    entropy_loss_of_epoch.append(entropy_loss.detach())
+                    combined_loss_of_epoch.append(total_loss.detach())
 
-                    for name, param in self.Brain.named_parameters():
-                        logging.info(f"name    : {name}, \n{param}")
-                        logging.info(f"gradient: {param.grad}")
+                    #update learning timesteps only for first (or any, just only one) epoch,
+                    # because we only want to count the data samples we train on (not how often we trained on them)
+                    if epoch == 1:
+                        logging.info(f"learning timesteps before update (total to do: {total_learning_timesteps}):")
+                        logging.info(learning_timesteps_done)
+                        learning_timesteps_done += self.batch_size
+                        #if learning_timesteps_done >= total_learning_timesteps:
+                            #logging.info(f"learning timesteps reached: {learning_timesteps_done}  / "
+                                        # f"total {total_learning_timesteps}."
+                                        # f"\nTRAINING ROUND BREAK.")
+                            #break
+                        logging.info("learning timesteps after update:")
+                        logging.info(learning_timesteps_done)
+                    #for name, param in self.Brain.named_parameters():
+                        #logging.info(f"name    : {name}, \n{param}")
+                        #logging.info(f"gradient: {param.grad}")
+
+                # AT THE END OF ALL BATCHES (ONE EPOCH)
                 #logging.info(f"Avg loss per epoch: {np.mean(epoch_loss)}")
-                # after each epoch end, append epoch loss list to train losses list
-                train_losses.append(epoch_loss)
+                # after each epoch end, append
+                # (each below will then be a list of lists)
+                # => list (for all epochs together) of lists (one for each epoch) of values (one for each obs in batch, e.g. 64)
+                # [[v,v,v],[v,v,v],[v,v,v],...] = [epoch1, epoch2, ...]
+                advantages_all_epochs.append(np.array(advantages_of_epoch).flatten())
+                prob_ratio_all_epochs.append(np.array(prob_ratio_of_epoch).flatten())
+                surr_loss_1_all_epochs.append(np.array(surr_loss_1_of_epoch).flatten())
+                surr_loss_2_all_epochs.append(np.array(surr_loss_2_of_epoch).flatten())
+                surr_loss_all_epochs.append(np.array(surr_loss_of_epoch).flatten())
+                actor_loss_all_epochs.append(actor_loss_of_epoch)
+                critic_loss_all_epochs.append(critic_loss_of_epoch)
+                entropy_loss_all_epochs.append(entropy_loss_of_epoch)
+                combined_loss_all_epochs.append(combined_loss_of_epoch)
 
                 logging.info(f"---EPOCH: {epoch} / {self.num_epochs} done.")
-                logging.info(f"Beginning validation.")
 
+            # AT THE END OF ALL EPOCHS
+            # after all 10 (or other) epochs, we save the data to csv
+            for li, liname in zip([advantages_all_epochs, prob_ratio_all_epochs, surr_loss_1_all_epochs,
+                                   surr_loss_2_all_epochs, surr_loss_all_epochs],
+                                  ["advantages_all_epochs", "prob_ratio_all_epochs", "surr_loss_1_all_epochs",
+                                   "surr_loss_2_all_epochs", "surr_loss_all_epochs"]):
+                pd.DataFrame(np.transpose(li),
+                         columns=epoch_colnames).to_csv(os.path.join(self.performance_save_path,
+                                                                         f"{liname}_"
+                                                                         f"ep{self.current_episode}_"
+                                                                         "LearningTimestepsDone_"
+                                                                         f"{learning_timesteps_done}.csv"))
+            pd.DataFrame({"actor_loss": np.array(actor_loss_all_epochs).flatten(),
+                          "critic_loss": np.array(critic_loss_all_epochs).flatten(),
+                          "entropy_loss": np.array(entropy_loss_all_epochs).flatten(),
+                          "combined_loss": np.array(combined_loss_all_epochs).flatten(),
+                          }).to_csv(os.path.join(self.performance_save_path,
+                                                 f"train_performances_"
+                                                 f"ep{self.current_episode}_"
+                                                 f"LearningTimestepsDone_{learning_timesteps_done}.csv"))
+
+            logging.info(f"Validation beginning.")
             # after all 10 epochs, if we have passed a validation env, we do some "out of sample testing"
             if self.EnvVal is not None:
-                end_of_episode_val_rewards = self._validation()
-            validation_rewards.append(end_of_episode_val_rewards)
-            pd.DataFrame(validation_rewards).to_csv(self.performance_save_path+".csv")
+                self._validation()
             logging.info(f"Validation ended.")
 
-    def _validation(self):
+    def _validation(self) -> None:
         validation_rewards = []
         obs_val = self.EnvVal.reset(day=self.EnvVal_firstday)
-
-        for j in range(len(self.EnvVal.df.index.unique())):  # todo: changed from (nothing) to +1
-            #with torch.no_grad():
+        for j in range(len(self.EnvVal.df.index.unique())):
             val_actions, val_value = self.predict(obs_val)
-            #actions = actions.detach().numpy()
-            #logging.info("val actions: ", actions)
-            #value = value.detach().numpy()
             obs_val, val_rewards, val_done, _ = self.EnvVal.step(val_actions)
-            #logging.info("obs_val after step", obs_val)
-            #logging.info("val reward: ", rewards)
             validation_rewards.append(val_rewards)
             if val_done:
                 break
         logging.info(f"validation mean reward: {np.mean(validation_rewards)}")
-        return validation_rewards
+        return None # Note: rewards are already saved to csv by the validation env
 
 
     def predict(self, new_obs):

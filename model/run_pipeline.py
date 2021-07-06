@@ -2,6 +2,8 @@ import logging
 import time
 import pandas as pd
 import os
+import numpy as np
+import random
 
 import torch
 from stable_baselines3.common.vec_env import DummyVecEnv
@@ -220,6 +222,12 @@ def run_expanding_window_setup(df: pd.DataFrame,
         logging.info(f"initial episode: {initial}")
         logging.info("--------")
 
+        # set some seeds
+        torch.manual_seed(settings.SEED)
+        np.random.seed(settings.SEED)
+        random.seed(settings.SEED)
+        torch.cuda.manual_seed(settings.SEED)
+        torch.backends.cudnn.deterministic = True
 
         ############## Data Setup starts ##############
         logging.info(f"--Data setup starting.")
@@ -229,22 +237,22 @@ def run_expanding_window_setup(df: pd.DataFrame,
         # and we don't have enough data to train and then test, so we stop the while loop
         if train_ending not in df.index:
             break
-        print("train data: ", train_data)
         # get validation data
         validation_data = df[(df.index >= validation_beginning) & (df.index <= validation_ending)]
         if validation_ending not in df.index:
             break
-        print("val data: ", validation_data)
-
-        logging.info("train data: ", train_data.head(3))
-        logging.info("val data: ", validation_data.head(3))
-
         # get test data (=test data)
         test_data = df[(df.index >= testing_beginning) & (df.index <= testing_ending)]
         # if only part of the test data is available we take this
         if testing_beginning in df.index and testing_ending not in df.index:
             testing_ending = df.index[-1]
             last_episode = True
+        logging.info("train data: ")
+        logging.info(train_data.head(3))
+        logging.info("val data: ")
+        logging.info(validation_data.head(3))
+        logging.info("test data: ")
+        logging.info(test_data.head(3))
         logging.info(f"--Data setup ending.")
         ############## Data Setup ends ##############
 
@@ -252,6 +260,9 @@ def run_expanding_window_setup(df: pd.DataFrame,
         # initialize training environment for the current episode
         logging.info(f"--Create instance train env.")
         if settings.STRATEGY_MODE == "ppo":
+            # ppo from stable baselines returns an error when not used with the vec environment; however, since we only pass one env,
+            # it doesn't actually make a difference (for games and complex problems, ppo is often used with parallel threads, but I did not
+            # implement parallel workers for my work
             env_train = DummyVecEnv([lambda: FinancialMarketEnv(df=train_data,
                                                                  features_list=data_settings.FEATURES_LIST,
                                                                  day=train_beginning,
@@ -301,24 +312,44 @@ def run_expanding_window_setup(df: pd.DataFrame,
 
         # initialize validation environment
         logging.info(f"--Create instance validation env.")
-        env_val = FinancialMarketEnv(df=validation_data,
-                                      features_list=data_settings.FEATURES_LIST,
-                                      day=validation_beginning,
-                                      iteration=str(current_episode_number),  # only used for logging.info
-                                      model_name=settings.STRATEGY_MODE,
-                                      mode="validation",
-                                      hmax_normalize=env_params.HMAX_NORMALIZE,
-                                      initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
-                                      transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
-                                      reward_scaling=env_params.REWARD_SCALING,
-                                      assets_dim=assets_dim,
-                                      shape_observation_space=shape_observation_space,
-                                      initial=True, # for validation, we always have an "initial state"
-                                      previous_state=[],
-                                      previous_asset_price=None,
-                                      price_colname=data_settings.MAIN_PRICE_COLUMN,
-                                      results_dir=results_dir,
-                                      reset_counter=0)
+        if settings.STRATEGY_MODE == "ppo":
+            env_val = DummyVecEnv([lambda: FinancialMarketEnv(df=validation_data,
+                                                                  features_list=data_settings.FEATURES_LIST,
+                                                                  day=validation_beginning,
+                                                                  iteration=str(current_episode_number),  # only used for logging.info
+                                                                  model_name=settings.STRATEGY_MODE,
+                                                                  mode="validation",
+                                                                  hmax_normalize=env_params.HMAX_NORMALIZE,
+                                                                  initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
+                                                                  transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
+                                                                  reward_scaling=env_params.REWARD_SCALING,
+                                                                  assets_dim=assets_dim,
+                                                                  shape_observation_space=shape_observation_space,
+                                                                  initial=True, # for validation, we always have an "initial state"
+                                                                  previous_state=[],
+                                                                  previous_asset_price=None,
+                                                                  price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                                                  results_dir=results_dir,
+                                                                  reset_counter=0)])
+        elif settings.STRATEGY_MODE == "ppoCustomBase":
+            env_val = FinancialMarketEnv(df=validation_data,
+                                          features_list=data_settings.FEATURES_LIST,
+                                          day=validation_beginning,
+                                          iteration=str(current_episode_number),  # only used for logging.info
+                                          model_name=settings.STRATEGY_MODE,
+                                          mode="validation",
+                                          hmax_normalize=env_params.HMAX_NORMALIZE,
+                                          initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
+                                          transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
+                                          reward_scaling=env_params.REWARD_SCALING,
+                                          assets_dim=assets_dim,
+                                          shape_observation_space=shape_observation_space,
+                                          initial=True, # for validation, we always have an "initial state"
+                                          previous_state=[],
+                                          previous_asset_price=None,
+                                          price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                          results_dir=results_dir,
+                                          reset_counter=0)
         env_val.seed(settings.SEED)
         env_val.action_space.seed(settings.SEED)
 
@@ -328,26 +359,48 @@ def run_expanding_window_setup(df: pd.DataFrame,
 
         # make testing environment
         logging.info(f"--Create instance test env.")
-        env_test = FinancialMarketEnv(df=test_data,
-                                      day=testing_beginning,
-                                      assets_dim=assets_dim,
-                                      mode="test",
-                                      features_list=data_settings.FEATURES_LIST,
-                                      hmax_normalize=env_params.HMAX_NORMALIZE,
-                                      initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
-                                      transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
-                                      reward_scaling=env_params.REWARD_SCALING,
-                                      shape_observation_space=shape_observation_space,
-                                      initial=initial,
-                                      # the previous test state is passed (iniital it is empty),
-                                      # so we can continue testing from where we ended (e.g. with the asset holdings of that time)
-                                      previous_state=last_test_state,
-                                      previous_asset_price=last_asset_price_test,
-                                      model_name=settings.STRATEGY_MODE,
-                                      iteration=str(current_episode_number),
-                                      price_colname=data_settings.MAIN_PRICE_COLUMN,
-                                      results_dir=results_dir,
-                                      reset_counter=0)
+        if settings.STRATEGY_MODE == "ppo":
+            env_test = DummyVecEnv([lambda: FinancialMarketEnv(df=test_data,
+                                                              day=testing_beginning,
+                                                              assets_dim=assets_dim,
+                                                              mode="test",
+                                                              features_list=data_settings.FEATURES_LIST,
+                                                              hmax_normalize=env_params.HMAX_NORMALIZE,
+                                                              initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
+                                                              transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
+                                                              reward_scaling=env_params.REWARD_SCALING,
+                                                              shape_observation_space=shape_observation_space,
+                                                              initial=initial,
+                                                              # the previous test state is passed (iniital it is empty),
+                                                              # so we can continue testing from where we ended (e.g. with the asset holdings of that time)
+                                                              previous_state=last_test_state,
+                                                              previous_asset_price=last_asset_price_test,
+                                                              model_name=settings.STRATEGY_MODE,
+                                                              iteration=str(current_episode_number),
+                                                              price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                                              results_dir=results_dir,
+                                                              reset_counter=0)])
+        elif settings.STRATEGY_MODE == "ppoCustomBase":
+            env_test = FinancialMarketEnv(df=test_data,
+                                          day=testing_beginning,
+                                          assets_dim=assets_dim,
+                                          mode="test",
+                                          features_list=data_settings.FEATURES_LIST,
+                                          hmax_normalize=env_params.HMAX_NORMALIZE,
+                                          initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
+                                          transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
+                                          reward_scaling=env_params.REWARD_SCALING,
+                                          shape_observation_space=shape_observation_space,
+                                          initial=initial,
+                                          # the previous test state is passed (iniital it is empty),
+                                          # so we can continue testing from where we ended (e.g. with the asset holdings of that time)
+                                          previous_state=last_test_state,
+                                          previous_asset_price=last_asset_price_test,
+                                          model_name=settings.STRATEGY_MODE,
+                                          iteration=str(current_episode_number),
+                                          price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                          results_dir=results_dir,
+                                          reset_counter=0)
 
         # get last asset prices from the test dataset; these are going to be used as initial state in the next episode
         # for the test set
@@ -373,17 +426,28 @@ def run_expanding_window_setup(df: pd.DataFrame,
                               train_env_firstday=train_data.index[0],
                               val_env_firstday=validation_data.index[0],
                               load_trained_model=load_trained_model,
-                              trained_model_save_path=trained_model_save_path)
-        if not settings.RETRAIN_DATA & current_episode_number > 1:
+                              trained_model_save_path=trained_model_save_path,
+                              current_episode_number=current_episode_number)
+
+        training_timesteps = len(train_data.index.unique()) * 2 # iterate 5 times over the data
+        if not settings.RETRAIN_DATA and current_episode_number > 1:
             if settings.STRATEGY_MODE == "ppoCustomBase":
-                training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN // 4 # todo: make multiple of data set length
+                #training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN // 4 # todo: make multiple of data set length
+                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                             f"\ntotal timesteps to train on: {training_timesteps}")
             elif settings.STRATEGY_MODE == "ppo":
-                training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS // 4 # todo: make multiple of data set length
+                #training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS // 4 # todo: make multiple of data set length
+                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                             f"\ntotal timesteps to train on: {training_timesteps}")
         else:
             if settings.STRATEGY_MODE == "ppoCustomBase":
-                training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN
+                #training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN
+                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                             f"\ntotal timesteps to train on: {training_timesteps}")
             elif settings.STRATEGY_MODE == "ppo":
-                training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS
+                #training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS
+                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                             f"\ntotal timesteps to train on: {training_timesteps}")
         logging.info(f"--Create instance for ppo model finished.")
 
 
@@ -424,20 +488,6 @@ def run_expanding_window_setup(df: pd.DataFrame,
         # trained model is saved in DRL_trading, then used in validation  /testing
         ############## Training ends ##############
 
-        ############## Validation starts ##############
-        #logging.info(f"##### VALIDATION")
-        #logging.info(f"---{settings.STRATEGY_MODE.upper()} Validation from: {validation_beginning} "
-        #                f"to {validation_ending}, (i={current_episode_number}).")
-        #DRL_predict(trained_model=model_agent,
-        #            test_data=validation_data,
-        #            test_env=env_val,
-        #            test_obs=obs_val,
-        #            mode="validation",
-        #            iteration=current_episode_number,
-        #            model_name=settings.STRATEGY_MODE,
-        #            results_dir=results_dir)
-        ############## Validation ends ##############
-
         ############## Testing starts ##############
         logging.info(f"##### TESTING")
         logging.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
@@ -466,7 +516,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
                 df_last_state.to_csv(f'{results_dir}/last_state/last_state_test_'
                                      f'{settings.STRATEGY_MODE}_ep{current_episode_number}.csv', index=False)
         test_end = time.time()
-        logging.warning(f"Testing time: " + str((test_end - test_start) / 60) + " minutes")
+        logging.info(f"Testing time: " + str((test_end - test_start) / 60) + " minutes")
 
         #last_test_state, lattest = DRL_predict(trained_model=model_agent,
         #                                     test_data=test_data,
@@ -482,7 +532,6 @@ def run_expanding_window_setup(df: pd.DataFrame,
         # if we have reached our last episode, we break / stop the while loop
         if last_episode:
             break
-
         if settings.RETRAIN_DATA == True:
             pass
             # load_trained_model will stay False, since we will retrain the model in every episode
@@ -540,6 +589,9 @@ def run_expanding_window_setup(df: pd.DataFrame,
     #                       BACKTESTING                         #
     #############################################################
     # first we also need to create directories
+
+    logging.info("=================Backtesting================")
+
     os.makedirs(f"{results_dir}/backtest/buy_trades")
     os.makedirs(f"{results_dir}/backtest/cash_value")
     os.makedirs(f"{results_dir}/backtest/datadates")
@@ -547,17 +599,18 @@ def run_expanding_window_setup(df: pd.DataFrame,
     os.makedirs(f"{results_dir}/backtest/last_state")
     os.makedirs(f"{results_dir}/backtest/number_asset_holdings")
     os.makedirs(f"{results_dir}/backtest/policy_actions")
-    os.makedirs(f"{results_dir}/backtest/portfolio_weights")
     os.makedirs(f"{results_dir}/backtest/portfolio_value")
     os.makedirs(f"{results_dir}/backtest/rewards")
     os.makedirs(f"{results_dir}/backtest/sell_trades")
     os.makedirs(f"{results_dir}/backtest/state_memory")
     os.makedirs(f"{results_dir}/backtest/transaction_cost")
-
-    logging.info("=================Starting Backtesting================")
+    os.makedirs(f"{results_dir}/backtest/all_weights_cashAtEnd")
+    os.makedirs(f"{results_dir}/backtest/asset_equity_weights")
 
     # get data for backtesting
     backtesting_data = df[(df.index >= backtesting_beginning) & (df.index <= backtesting_ending)]
+    logging.info("backtest data: ")
+    logging.info(backtesting_data.head(3))
 
     # make testing environment
     env_backtesting = FinancialMarketEnv(df=backtesting_data,
@@ -587,7 +640,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
     ############## Environment Setup ends ##############
 
     ############## Backtesting starts ##############
-    logging.info(f"##### BACKTESTING")
+    logging.info(f"##### STARTING BACKTESTING")
     logging.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
                  f"{backtesting_beginning} to {backtesting_ending}, (ep={current_episode_number}).======")
 
@@ -601,16 +654,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
         # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
         # and info (here empty, hence _, since we don't need it)
         obs_backtest, rewards, dones, _ = env_backtesting.step(action)
-        if j == (len(backtesting_data.index.unique()) - 1):  # todo: changed from -2 to -1
-            # todo:
-            #  Note: at the date just before the last date, we don't take a step anymore here (since we start counting from 0)
-            # and hence the last state to which we took a step
-            # get the last state (flattened, then as dict, but we only need the flattened one),
-            # the last asset prices and other stuff we don't need here
-            last_state_flattened, last_test_state, _, _, _, _ = env_backtesting.render()
-            # save the last backtesting state as df
-            df_last_state = pd.DataFrame({'last_state': last_state_flattened})
-            df_last_state.to_csv(f'{results_dir}/last_state/last_state_test_{settings.STRATEGY_MODE}_'
-                                 f'ep{current_episode_number}.csv', index=False)
+        if dones:
+            break
     backtest_end = time.time()
-    logging.warning(f"Backtesting time: " + str((backtest_end - backtest_start) / 60) + " minutes")
+    logging.info(f"Backtesting time: " + str((backtest_end - backtest_start) / 60) + " minutes")

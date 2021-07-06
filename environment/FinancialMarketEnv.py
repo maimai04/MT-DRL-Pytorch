@@ -124,9 +124,19 @@ class FinancialMarketEnv(gym.Env):
         # initializing state for current day:
         # current cash balance is the initial cash balance
         self.current_cash_balance = self.initial_cash_balance
-        # number of asset holdings is a vector of zeroes with the same length as number of assets (one place for each asset)
+        # number of asset holdings and asset qeuity weights are each a vector of zeroes with the same length as number of assets (one place for each asset)
         self.current_n_asset_holdings = [0] * self.assets_dim
-        # in order to have it simpler to query, i created a dictionary for the state, where all the things to be saved
+        # weights are a bit "special"; because they change twice in a state transition;
+        # first, when we rebalance our portfolio, we change our weights but with the old asset prices
+        # second, when the we get the new day / state and observe the new asset prices, the (money-) weights o our assets change again
+        # here, we only record the (money-)weights of each asset at the beginning of the day, meaning: after both changes mentioned above
+        # so we start with weights of 0; the next state will be n_asset_holdings*new_asset_price / (equity portfolio value)
+        self.current_asset_equity_weights_startofday = [0] * self.assets_dim
+        # then it is also interesting to track how the weights of all stocks change compared to the whole pf value (incl, cash)
+        # and how much weight cash has in the portfolio, hence we create a vector of zeroes of length n_assets + 1 (for cash)
+        # the last list entry will be for cash
+        self.current_all_weights_startofday = [0] * self.assets_dim + [1]
+        # in order to have it simpler to query, I created a dictionary for the state, where all the things to be saved
         # are put in there and accessible by "keyname"
         self.state = {"cash": [self.current_cash_balance],
                       "n_asset_holdings": self.current_n_asset_holdings}
@@ -172,6 +182,8 @@ class FinancialMarketEnv(gym.Env):
                          "exercised_actions": [],
                          "transaction_cost": [],
                          "number_asset_holdings": [self.current_n_asset_holdings],
+                         "asset_equity_weights": [self.current_asset_equity_weights_startofday], # asset weights within equity part (= n_asset_holdings/total_asset_holdings)
+                         "all_weights_cashAtEnd": [self.current_all_weights_startofday],
                          "sell_trades": [],
                          "buy_trades": [],
                          "state_memory": [self.state_flattened],
@@ -239,6 +251,10 @@ class FinancialMarketEnv(gym.Env):
                     # we use the function "try", because the comparison does not work if it is not a list / array.
                     if len(self.memories[key][0]) == len(self.asset_names):
                         keydf.columns = self.asset_names
+                    # if each element i a key has the same length as asset names + 1 then the key is going to be the
+                    # asset + cash weights key, so we want the header to be asset names + cash
+                    if len(self.memories[key][0]) == len(self.asset_names)+1:
+                        keydf.columns = list(self.asset_names) + ["Cash"]
                 except:
                     pass
                 # if the key is "state_memory" and we are in the first episode,
@@ -332,7 +348,7 @@ class FinancialMarketEnv(gym.Env):
             self.memories["buy_trades"].append(self.buy_trades)
             self.memories["transaction_cost"].append(self.cost)
             self.memories["number_asset_holdings"].append(self.current_n_asset_holdings)
-            self.memories["cash"].append(self.current_cash_balance)
+            self.memories["cash_value"].append(self.current_cash_balance)
 
             ################################################
             ### ENVIRONMENT SAMPLES A NEW DAY, NEW STATE   #
@@ -365,6 +381,12 @@ class FinancialMarketEnv(gym.Env):
             current_portfolio_value = self.current_cash_balance + sum(np.array(self.current_n_asset_holdings) *
                                                                   np.array(current_asset_prices))
 
+            # weights of each asset in terms of equity pf value = number of assets held * asset prices / equity portfolio value
+            self.current_asset_equity_weights_startofday = np.array(self.current_n_asset_holdings) * np.array(current_asset_prices) / (current_portfolio_value-self.current_cash_balance)
+            # eights of each asset and of cash in terms of total portfolio value = number of assets held * asset prices / total pf value, then append cash weight at the end of the list
+            self.current_all_weights_startofday = list(np.array(self.current_n_asset_holdings) * np.array(current_asset_prices) / current_portfolio_value) + [self.current_cash_balance / current_portfolio_value]
+
+
             ### CALCULATE THE REWARD, FOLLOWING THE PREVIOUS STATE, ACTION PAIR
             _calculate_reward(end_portfolio_value=current_portfolio_value,
                               begin_portfolio_value=begin_portfolio_value)
@@ -375,6 +397,8 @@ class FinancialMarketEnv(gym.Env):
             self.memories["portfolio_value"].append(current_portfolio_value)
             #self.memories["cash_value"].append(self.state["cash"][0]) # todo: rm, already appended above after actions
             self.memories["state_memory"].append(self.state_flattened)
+            self.memories["asset_equity_weights"].append(self.current_asset_equity_weights_startofday)
+            self.memories["all_weights_cashAtEnd"].append(self.current_all_weights_startofday)
 
             ### RESET SOME COUNTERS
             # we want to get the transaction cost, sell trades and buy trades accumulated daily only (on a per step basis)
@@ -538,6 +562,9 @@ class FinancialMarketEnv(gym.Env):
             # initialize current state
             self.current_cash_balance = self.initial_cash_balance
             self.current_n_asset_holdings = [0] * self.assets_dim
+            self.current_asset_equity_weights_startofday = [0] * self.assets_dim
+            self.current_all_weights_startofday = [0] * self.assets_dim + [1] # cash has 100% wieght in the beginning
+
             self.observed_asset_prices_list = self.data[self.price_colname].values.tolist()
             self.state = {"cash": [self.current_cash_balance],
                           "n_asset_holdings": self.current_n_asset_holdings}
@@ -562,6 +589,8 @@ class FinancialMarketEnv(gym.Env):
                              "exercised_actions": [],
                              "transaction_cost": [],
                              "number_asset_holdings": [self.current_n_asset_holdings],
+                             "asset_equity_weights": [self.current_asset_equity_weights_startofday],
+                             "all_weights_cashAtEnd": [self.current_all_weights_startofday],
                              "sell_trades": [],
                              "buy_trades": [],
                              "state_memory": [self.state_flattened]}
@@ -583,12 +612,17 @@ class FinancialMarketEnv(gym.Env):
             # basically, the terminal state of the previous episode is going to be the starting state of the current episode,
             # because we did not yet do an action for this state in the last episode
             # Note: the previous state is passed at the initialization of the environment (see __init__() function)
+
             self.current_n_asset_holdings = self.previous_state["n_asset_holdings"]
             self.current_cash_balance = self.previous_state["cash"][0]
             previous_asset_prices = self.previous_asset_price
             starting_portfolio_value = self.current_cash_balance + \
-                                       sum(np.array(self.current_n_asset_holdings) *
-                                           np.array(previous_asset_prices))
+                                       sum(np.array(self.current_n_asset_holdings) * np.array(previous_asset_prices))
+            # weights of each asset in terms of equity pf value = number of assets held * asset prices / equity portfolio value
+            self.current_asset_equity_weights_startofday = np.array(self.current_n_asset_holdings) * np.array(previous_asset_prices) / (starting_portfolio_value-self.current_cash_balance)
+            # eights of each asset and of cash in terms of total portfolio value = number of assets held * asset prices / total pf value, then append cash weight at the end of the list
+            self.current_all_weights_startofday = list(np.array(self.current_n_asset_holdings) * np.array(previous_asset_prices) / starting_portfolio_value) + [self.current_cash_balance / starting_portfolio_value]
+
             # update state dict
             self.state = {"cash": [self.current_cash_balance],
                           "n_asset_holdings": self.current_n_asset_holdings}
@@ -606,6 +640,8 @@ class FinancialMarketEnv(gym.Env):
                              "exercised_actions": [],
                              "transaction_cost": [],
                              "number_asset_holdings": [self.current_n_asset_holdings],
+                             "asset_equity_weights": [self.current_asset_equity_weights_startofday],
+                             "all_weights_cashAtEnd": [self.current_all_weights_startofday],
                              "sell_trades": [],
                              "buy_trades": [],
                              "state_memory": [self.state_flattened]}
