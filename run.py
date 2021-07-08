@@ -1,19 +1,9 @@
-import logging
-from setup_functions import *
-from model.run_pipeline import *
 import os
-import numpy as np
-import random
+# own libraries
+from pipeline.setup_functions import *
+from pipeline.run_pipeline import *
+from pipeline.support_functions import *
 
-"""
-run only PPO
-everything else c.p.
-
-additional changes from BCAP:
-- added comments
-- added variable which_run, to save subsequent runs in corresponding folders.
-
-"""
 
 ############################
 ##     MAIN CONDITION     ##
@@ -58,6 +48,7 @@ if __name__ == "__main__":
     data.index = data[data_settings.DATE_COLUMN].factorize()[0]
 
     # get parameters about dataframe shape (we need this information to feed it to the environment later)
+    # todo: n_features maybe not needed
     assets_dim, n_features = \
         get_data_params(final_df=data,
                         asset_name_column=data_settings.ASSET_NAME_COLUMN,
@@ -76,6 +67,17 @@ if __name__ == "__main__":
     # However, that also means that the whole run is going to take a little longer (since there will be a small time loss
     # for plotting / calculating summaries
 
+    common_logger = custom_logger(seed="allSeeds",
+                                  logging_path=logsave_path,
+                                  level=logging.DEBUG)
+    # loggings (these are all saved in the _LOGGINGS folder of the whole run
+    common_logger.info("(main) FINAL INPUT DATAFRAME")
+    common_logger.info("---------------------------------------------------------")
+    common_logger.info(data.head(3))
+    common_logger.info(f"(main) Shape of Dataframe (unique dates, columns) : ({len(data.index.unique())}, {len(data.columns)})")
+    # logging.info("(main) number of validation trading dates: " + str(len(unique_trade_dates_validation)))
+    common_logger.info("(main) shape observation space: " + str(shape_observation_space))
+    common_logger.info(f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
 
     # begin the run count (one whole run per seed)
     # Note: the seeds are needed because there is some randomness involved in the whole process, namely:
@@ -91,30 +93,20 @@ if __name__ == "__main__":
         #torch.cuda.manual_seed(seed)
         #torch.backends.cudnn.deterministic = True
 
-        logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
-                            filemode='a',
-                            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                            # asctime = time, msecs, name = name of who runned it (?), levelname (e.g. DEBUG, INFO => verbosity), message
-                            datefmt='%H:%M:%S',
-                            # level=logging.INFO
-                            # level=logging.DEBUG
-                            level=logging.NOTSET)
-
-        logging.info("\n#################################################################")
-        logging.info(f"### (main) RUN {str(run_count)} --- AGENT SEED: {str(settings.SEED)}")
-        logging.info("#################################################################")
-
-        # loggings (these are all saved in the _LOGGINGS folder of the whole run
-        logging.info("(main) FINAL INPUT DATAFRAME")
-        logging.info("---------------------------------------------------------")
-        logging.info(data.head(3))
-        logging.info(
-            f"(main) Shape of Dataframe (unique dates, columns) : ({len(data.index.unique())}, {len(data.columns)})")
-        # logging.info("(main) number of validation trading dates: " + str(len(unique_trade_dates_validation)))
-        logging.info("(main) shape observation space: " + str(shape_observation_space))
-        logging.info(
-            f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
-        # logging.info(f"(main) unique_trade_dates_validation[0] = {str(unique_trade_dates_validation[0])}\n ")
+        #logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
+        #                    filemode='a',
+        #                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+        #                    # asctime = time, msecs, name = name of who runned it (?), levelname (e.g. DEBUG, INFO => verbosity), message
+        #                    datefmt='%H:%M:%S',
+        #                    # level=logging.INFO
+        #                    # level=logging.DEBUG
+        #                    level=logging.NOTSET)
+        logger = custom_logger(seed=seed,
+                               logging_path=logsave_path,
+                               level=logging.DEBUG)
+        logger.info("#################################################################")
+        logger.info(f"### (main) RUN {str(run_count)} --- AGENT SEED: {str(settings.SEED)}")
+        logger.info("#################################################################")
 
         #### SETUP
         ####------------------------------
@@ -125,11 +117,26 @@ if __name__ == "__main__":
         #### RUN MODEL SETUP
         ####-------------------------------
         # run the chosen setup (here: expanding window)
-        logging.info("Run expanding window setup.")
+        logger.info("Run expanding window setup.")
         run_expanding_window_setup(df=data,
                                    results_dir=results_subdir,
                                    trained_dir=trained_subdir,
                                    assets_dim=assets_dim,
                                    #n_features=n_features,
                                    shape_observation_space=shape_observation_space,
+                                   logger=logger
                                    )
+
+    #############################################################
+    #         PERFORMANCE CALCULATION ACROSS ALL SEEDS          #
+    #############################################################
+    common_logger.info("Summarizing whole run performance across all seeds.")
+    perf_start = time.time()
+    calculate_performance_measures(run_path=results_dir,
+                                   level="run",
+                                   seed=settings.SEED,
+                                   mode="test",
+                                   logger=common_logger)
+    common_logger.info("Summarizing whole run performance across all seeds finished.")
+    perf_end = time.time()
+    common_logger.info(f"Performance summary over all seeds took: " + str((perf_start - perf_end) / 60) + " minutes")

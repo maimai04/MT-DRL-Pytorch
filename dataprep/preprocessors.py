@@ -1,11 +1,6 @@
-import numpy as np
-import pandas as pd
 from stockstats import StockDataFrame
-import logging
 # own libraries:
-from config.config import *
-from config.dataprep_config import *
-from setup_functions import *
+from pipeline.setup_functions import *
 
 ############################
 ##   SINGLE FUNCTIONS   ##

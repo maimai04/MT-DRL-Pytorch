@@ -4,9 +4,13 @@ from stable_baselines3 import PPO
 from stable_baselines3.ppo.policies import MlpPolicy
 import gym
 import math
+import logging
+import glob
+import ffn
+import pandas as pd
+import numpy as np
 
 # own libraries
-import logging
 from config.config import *
 from environment.FinancialMarketEnv import FinancialMarketEnv
 from model.CustomOnPolicyBuffer import OnPolicyBuffer
@@ -15,7 +19,7 @@ from model.CustomActorCriticNets import BrainActorCritic, \
     init_weights_feature_extractor_net, init_weights_actor_net, init_weights_critic_net
 
 ########################################################################
-# DEFINE FUNCTIONS FOR TRAINING, PREDICTION AND PERFORMANCE EVALUATION #
+# DEFINE FUNCTION FOR TRAINING                                         #
 ########################################################################
 
 def get_model(train_environment,
@@ -29,7 +33,8 @@ def get_model(train_environment,
               val_env_firstday: int=0,
               load_trained_model: bool=False,
               trained_model_save_path: str=None,
-              current_episode_number: str=None):
+              current_episode_number: int=None,
+              logger=None):
 
     if strategy_mode == "ppoCustomBase":
         # if we use my custom PPO algorithm, we first need to create an instance of some of the components,
@@ -44,7 +49,7 @@ def get_model(train_environment,
                                  optimizer=agent_params.ppoCustomBase.OPTIMIZER,
                                  learning_rate=agent_params.ppoCustomBase.OPTIMIZER_LEARNING_RATE,
                                  )
-        if load_trained_model:
+        if load_trained_model and current_episode_number > 1:
             # loading trained model to brain
             brain.load_state_dict(torch.load(trained_model_save_path))
         # NOTE: the buffer size is the number of available training points (because these we want to store)
@@ -54,8 +59,8 @@ def get_model(train_environment,
         # instead, the last batch is just joing to have some zero padding at the end so that it will stil be of the same length
         buffer_size = max(number_train_data_points,
                           math.ceil(number_train_data_points / agent_params.ppoCustomBase.BATCH_SIZE) * agent_params.ppoCustomBase.BATCH_SIZE)
-        logging.info(f"buffer size:  {buffer_size}")
-        logging.info(f"number of train data points passed: {number_train_data_points}")
+        logger.info(f"buffer size:  {buffer_size}")
+        logger.info(f"number of train data points passed: {number_train_data_points}")
         buffer = OnPolicyBuffer(buffer_size=buffer_size,
                                 obs_shape=(shape_observation_space,),
                                 actions_number=assets_dim)
@@ -76,9 +81,10 @@ def get_model(train_environment,
                               performance_save_path=performance_save_path,
                               current_episode=current_episode_number,
                               train_env_firstday=train_env_firstday,
-                              val_env_firstday=val_env_firstday)
+                              val_env_firstday=val_env_firstday,
+                              logger=logger)
     elif strategy_mode == "ppo":
-        if load_trained_model:
+        if load_trained_model and current_episode_number > 1:
             model = PPO.load(trained_model_save_path)
             model.set_env(train_environment)
         else:

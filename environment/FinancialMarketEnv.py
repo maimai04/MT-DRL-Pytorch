@@ -1,7 +1,8 @@
+import logging
+
 import numpy as np
 import pandas as pd
 from itertools import chain
-import logging
 import gym
 from gym import spaces
 
@@ -70,7 +71,8 @@ class FinancialMarketEnv(gym.Env):
                  # counter of how many steps were taken in one episode, used for saving results and for analysis / debugging
                  steps_counter: int = 0,
                  # whether we want to save results or not (default True, but for debugging sometimes False)
-                 save_results=True):
+                 save_results=True, 
+                 logger=None):
         # we call the init function in the class gym.Env
         super().__init__()
         """
@@ -78,6 +80,7 @@ class FinancialMarketEnv(gym.Env):
                    (split_by_date function)
         ...
         """
+        self.logger = logger
         ##### INPUT VARIABLES TO THE CLASS
         self.reset_counter = reset_counter
         self.final_state_counter = final_state_counter
@@ -527,8 +530,8 @@ class FinancialMarketEnv(gym.Env):
         else:
             self.day = self.firstday
 
-        # some logging to the logging file, for analysis / check if everything is correct
-        logging.info(f"({self.mode}) reset env, initial episode = {self.initial}, day = {self.day}")
+        # some self.logger to the self.logger file, for analysis / check if everything is correct
+        self.logger.info(f"({self.mode}) reset env, initial episode = {self.initial}, day = {self.day}")
 
         # get the first observation /initial state from the provided train / validation / test dataset
         self.data = self.df.loc[self.day, :]

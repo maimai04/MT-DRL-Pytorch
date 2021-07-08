@@ -1,7 +1,6 @@
-import logging
-from setup_functions import *
+from pipeline.setup_functions import *
 from model.models_pipeline import *
-import os
+
 """
 run only PPO
 everything else c.p.

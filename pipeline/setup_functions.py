@@ -1,6 +1,6 @@
-import os
-import pandas as pd
-from model.run_pipeline import *
+import sys
+
+from pipeline.run_pipeline import *
 from config.config import *
 from config.dataprep_config import *
 
@@ -82,10 +82,10 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
     if mode == "seed_dir":
         ### RESULTY SUBDIRECTORY
         # creating results sub-directory, one for each seed (for which the algorithm is run) within one run
-        results_subdir = os.path.join(results_dir, f"agentSeed{settings.SEED}")
+        results_subdir = os.path.join(results_dir, f"randomSeed{settings.SEED}")
         os.makedirs(results_subdir)
         ### TRAINED MODEL SUBDIRECTORY
-        trained_subdir = os.path.join(trained_dir, f"agentSeed{settings.SEED}")
+        trained_subdir = os.path.join(trained_dir, f"randomSeed{settings.SEED}")
         os.makedirs(trained_subdir)
 
         # creating sub-sub-directories for the actual results folders (e.g. portfolio_value etc.)
@@ -138,6 +138,7 @@ def config_logging_to_txt(results_subdir,
                         "------------------------------------\n"
                         f"DATA PREPARATION SETTINGS\n"
                         "------------------------------------\n"
+                        f"DATA / COUNTRY           : {data_settings.COUNTRY}\n"
                         f"FEATURES_LIST            : {data_settings.FEATURES_LIST}\n"
                         f"FEATURES_MODE            : {data_settings.FEATURES_MODE}\n"
                         "------------------------------------\n"
@@ -197,8 +198,40 @@ def config_logging_to_txt(results_subdir,
     return None
 
 
+#logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
+#                    filemode='a',
+#                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+#                    datefmt='%H:%M:%S',
+#                    # level=logging.INFO
+#                    # level=logging.DEBUG
+#                    level=logging.NOTSET)
+
+def custom_logger(seed: int,
+                  logging_path: str,
+                  level: logging = logging.NOTSET):
+    """
+    Method to return a custom logger with the given name and level
+    """
+    logger_name = f"run_log_seed_{seed}"
+    filename = os.path.join(logging_path, logger_name+".txt")
+    logger = logging.getLogger(filename)
+    logger.setLevel(level)
+    format_string = '%(asctime)s %(levelname)s %(message)s'
+    log_format = logging.Formatter(format_string)
+    # Creating and adding the console handler
+    #console_handler = logging.StreamHandler(sys.stdout)
+    #console_handler.setFormatter(log_format)
+    #logger.addHandler(console_handler)
+    # Creating and adding the file handler
+    filemode = 'a'
+    file_handler = logging.FileHandler(filename, mode=filemode)
+    file_handler.setFormatter(log_format)
+    logger.addHandler(file_handler)
+    return logger
+
+
 def get_data_params(final_df: pd.DataFrame,
-                    feature_cols=data_settings.FEATURES_LIST,
+                    feature_cols = data_settings.FEATURES_LIST,
                     asset_name_column="tic",
                     ) -> list:
     """

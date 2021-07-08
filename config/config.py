@@ -55,7 +55,8 @@ class settings:
 
     # ---------------LEAVE---------------
     ### define 10 randomly picked numbers to be used for seeding
-    SEEDS_LIST = [0, 5, 23, 7774, 9090, 11112,  45252, 80923, 223445, 444110]
+    SEEDS_LIST = [0, 5]#, 23, 7774, 9090, 11112,  45252, 80923, 223445, 444110]
+    SEED = None # placeholder, will be overwritten in run file)
 
     ### returns current timestamp, mainly used for naming directories/ printout / logging to .txt
     NOW = datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")
@@ -76,6 +77,7 @@ class data_settings:
     # DATA SOURCE AND DATA SET CODE
     DATABASE = "WDB"  # stands for Wharton Data Base
     COUNTRY = "US"
+
     ### CHOOSE WHICH ARE THE (MANDATORY) BASE COLUMNS; for Wharton DB: datadate, tic
     if DATABASE == "WDB":
         # adjcp (adjusted closing price) is a default column we need in the state space because we need it to calculate
@@ -241,7 +243,11 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        NET_VERSION = "base"
+        NET_VERSION = "base1"
+        #NET_VERSION = "base2"
+        #NET_VERSION = "LSTM1"
+        #NET_VERSION = "LSTM2"
+
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64

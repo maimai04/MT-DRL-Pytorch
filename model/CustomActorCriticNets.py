@@ -29,7 +29,7 @@ class FeatureExtractorNet(nn.Module):
                  observations_size: int = None,
                  mid_features_size: int = 64,
                  hidden_size: int = 64,
-                 version: str = "base"):
+                 version: str = "base1"):
         """
         obs_size  : size of the observation space, input dimension
         act_size  : number of actions, will be output dimension of the actor net
@@ -37,7 +37,7 @@ class FeatureExtractorNet(nn.Module):
         """
         super(FeatureExtractorNet, self).__init__()
         # define the network which outputs the action_mean
-        if version == "base":
+        if version == "base1":
             # vanilla version with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
             # and both layers shared between actor and critic. Actor and critic then only
             # have one separate layer each, that s, for the output (actions for actor, value for critic)
@@ -52,6 +52,7 @@ class FeatureExtractorNet(nn.Module):
                 nn.Linear(64, mid_features_size, bias=True),
                 nn.Tanh()
             )
+
 
     def forward(self, observations):
         """
@@ -77,7 +78,7 @@ class ActorNet(nn.Module):
                mid_features_size: int=64,
                # hidden size in hidden layer, if there is any
                hidden_size: int=64,
-               version: str="base",
+               version: str="base1",
                ):
     """
     mid_features_size  : size of the observation space / encoded features by feature extractor
@@ -86,7 +87,7 @@ class ActorNet(nn.Module):
     """
     super(ActorNet, self).__init__()
     # define the network which outputs the action_mean
-    if version == "base":
+    if version == "base1":
       # in the base version, as already discussed in the Feature extractor class,
       # the feature extraction is fully shared between actor and critic.
       # acto r hence only consists of one additional layer for the actions
@@ -116,7 +117,7 @@ class CriticNet(nn.Module):
   def __init__(self,
                mid_features_size: int=64,
                hidden_size: int=64,
-               version: str="base"):
+               version: str="base1"):
     """
     mid_features_size  : size of the observation space, input dimension
     hidden_size        : number of neurons
@@ -124,7 +125,7 @@ class CriticNet(nn.Module):
     """
     super(CriticNet, self).__init__()
 
-    if version == "base":
+    if version == "base1":
       # base version is shared feature extractor with actor, and then only
       # one separate layer for critic for value output
       self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
@@ -145,30 +146,33 @@ class CriticNet(nn.Module):
 
 ########## ACTOR-CRITIC BRAIN (where everything from above comes together
 
-# Helper function for weights intialization (since it is quite cumbersome if
-# we have a nn.Sequential() model)
+# Helper functions for weights intialization (since it is quite cumbersome if we have a nn.Sequential() model)
+# see: https://pytorch.org/docs/stable/nn.init.html
+# see: https://discuss.pytorch.org/t/initialising-weights-in-nn-sequential/76553
+# about weights initialization, see also:
+# https://towardsdatascience.com/all-ways-to-initialize-your-neural-network-16a585574b52
+# https://ml-compiled.readthedocs.io/en/latest/initialization.html
+# weight initialization is important to overcome the problem of exploding / vanishing gradients in very deep
+# neural networks. Since the network here is rather shallow, the way we initialize the weights doesn't have a huge impact.
+# (whether we do Xavier or He or orthogonal s/ orthonormal etc.)
 def init_weights_feature_extractor_net(module, gain=1.):
-    # see: https://pytorch.org/docs/stable/nn.init.html
-    # see: https://discuss.pytorch.org/t/initialising-weights-in-nn-sequential/76553
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, gain=gain)
         if module.bias is not None:
+            # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
-
 def init_weights_actor_net(module, gain=0.01):
-    # see: https://pytorch.org/docs/stable/nn.init.html
-    # see: https://discuss.pytorch.org/t/initialising-weights-in-nn-sequential/76553
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, gain=gain)
         if module.bias is not None:
+            # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
 
 def init_weights_critic_net(module, gain=1.):
-    # see: https://pytorch.org/docs/stable/nn.init.html
-    # see: https://discuss.pytorch.org/t/initialising-weights-in-nn-sequential/76553
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, gain=gain)
         if module.bias is not None:
+            # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
 
 ### BRAIN CLASS
@@ -176,16 +180,16 @@ class BrainActorCritic(nn.Module):
     def __init__(self,
                  observations_size: int,
                  actions_num: int,
-                 init_weights_feature_extractor_net=init_weights_feature_extractor_net,
-                 init_weights_actor_net=init_weights_actor_net,
-                 init_weights_critic_net=init_weights_critic_net,
+                 init_weights_feature_extractor_net = init_weights_feature_extractor_net,
+                 init_weights_actor_net = init_weights_actor_net,
+                 init_weights_critic_net = init_weights_critic_net,
                  mid_features_size: int = 64,
                  hidden_size_actor: int = 64,
                  hidden_size_critic: int = 64,
                  hidden_size_features_extractor: int = 64,
-                 optimizer=torch.optim.Adam,
-                 learning_rate=0.001,
-                 version="base"
+                 optimizer: torch.optim = torch.optim.Adam,
+                 learning_rate: float = 0.001,
+                 version: str = "base1",
                  ):
         super(BrainActorCritic, self).__init__()
         self.shared_feature_extractor = FeatureExtractorNet(observations_size=observations_size,
@@ -201,6 +205,7 @@ class BrainActorCritic(nn.Module):
                                 hidden_size=hidden_size_critic,
                                 version=version)
 
+        #initialize orthogonal weights
         self.init_weights_feature_extractor_net = init_weights_feature_extractor_net
         self.init_weights_actor_net = init_weights_actor_net
         self.init_weights_critic_net = init_weights_critic_net
@@ -321,5 +326,7 @@ class BrainActorCritic(nn.Module):
         # we predict deterministically, hence we can just take the action means (most probable action from the distribution)
         predicted_actions = action_means
         predicted_value = value
-
+        # note: prediction here is deterministic; we take the action means (= the output of the actor network)
+        # we could also sample an action from our actor network instead (non-deterministic prediction),
+        # but if we predict we normally want to use the most likely prediction of our current model for performance evaluation
         return predicted_actions, predicted_value

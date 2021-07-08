@@ -4,14 +4,14 @@ import pandas as pd
 import os
 import numpy as np
 import random
-
 import torch
 from stable_baselines3.common.vec_env import DummyVecEnv
 
 # import own libraries
-from config.config import settings, data_settings, env_params, agent_params
+from config.config import settings, data_settings, env_params
 from environment.FinancialMarketEnv import FinancialMarketEnv
-from model.models import get_model
+from pipeline.performance_analysis_functions import calculate_performance_measures
+from pipeline.support_functions import get_model
 
 #######################################
 ##    FUNCTION TO RUN WHOLE SETUP    ##
@@ -27,7 +27,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                # (=n_stocks*n_features_per_stock+n_separate_features+n_stocks(for stock holdings/weights)+1(for cash position)
                                shape_observation_space: int,
                                # which ppo version is run: ppo (stable baselines3), ppoCustomBase, ppoCustomLSTM
-                               ) -> None:
+                               logger: logging) -> None:
     """
     This function implements an expanding window cross validation for time series.
     It works as follows:
@@ -87,12 +87,12 @@ def run_expanding_window_setup(df: pd.DataFrame,
     @param retrain_train_data:
     @return:
     """
-    logging.info("=======Starting {} Agent (run_model)=======".format(settings.STRATEGY_MODE))
+    logger.info("=======Starting {} Agent (run_model)=======".format(settings.STRATEGY_MODE))
 
     #############################################################
     #                          SETUP                            #
     #############################################################
-    logging.info("--Setup start..")
+    logger.info("--Setup start..")
     ### create empty lists to be filled later
     # last train state is the last state we were in during the last training period
     # we need this state
@@ -183,21 +183,21 @@ def run_expanding_window_setup(df: pd.DataFrame,
             if i >= 31:
                 break
     del i
-    logging.info("--Setup end.")
+    logger.info("--Setup end.")
 
     #############################################################
     #                    TRAIN / TEST LOOP                      #
     #############################################################
     # for timing, calculating how long it runs
     episodes_start = time.time()
-    logging.info(f"--Train/Val/Test loop starting @{episodes_start}.")
+    logger.info(f"--Train/Val/Test loop starting @{episodes_start}.")
 
     # as long as the start of the testing period does not go beyond the end of our data set,
     # we do an expanding window train/test (cross validation basically)
     # (unless some other breaking conditions fulfilled, below)
     while testing_beginning <= enddate_index:
-        logging.info("==================================================")
-        #logging.info("iteration (time step)  : "+str(i - settings.REBALANCE_WINDOW - settings.VALIDATION_WINDOW + 1))
+        logger.info("==================================================")
+        #logger.info("iteration (time step)  : "+str(i - settings.REBALANCE_WINDOW - settings.VALIDATION_WINDOW + 1))
         # initial state is empty
         if current_episode_number == 1:
             # if we are in the initial episode, we set "initial" = True, because
@@ -206,21 +206,21 @@ def run_expanding_window_setup(df: pd.DataFrame,
             initial = True
         else:
             initial = False
-        logging.info("--------INITIALS")
-        logging.info(f"CURRENT EPISODE {current_episode_number}")
-        logging.info(f"RUN_MODE {settings.RUN_MODE}")
-        logging.info(f"train_beginning {train_beginning}")
-        logging.info(f"train_ending {train_ending}")
-        logging.info(f"validation_beginning {validation_beginning}")
-        logging.info(f"validation_ending {validation_ending}")
-        logging.info(f"testing_beginning {testing_beginning}")
-        logging.info(f"testing_ending {testing_ending}")
-        logging.info(f"backtesting_beginning {backtesting_beginning}")
-        logging.info(f"backtesting_ending {backtesting_ending}")
-        logging.info(f"global enddate of dataset: {enddate}, index of global enddate: {enddate_index}")
-        logging.info(f"load_trained_model {load_trained_model}")
-        logging.info(f"initial episode: {initial}")
-        logging.info("--------")
+        logger.info("--------INITIALS")
+        logger.info(f"CURRENT EPISODE {current_episode_number}")
+        logger.info(f"RUN_MODE {settings.RUN_MODE}")
+        logger.info(f"train_beginning {train_beginning}")
+        logger.info(f"train_ending {train_ending}")
+        logger.info(f"validation_beginning {validation_beginning}")
+        logger.info(f"validation_ending {validation_ending}")
+        logger.info(f"testing_beginning {testing_beginning}")
+        logger.info(f"testing_ending {testing_ending}")
+        logger.info(f"backtesting_beginning {backtesting_beginning}")
+        logger.info(f"backtesting_ending {backtesting_ending}")
+        logger.info(f"global enddate of dataset: {enddate}, index of global enddate: {enddate_index}")
+        logger.info(f"load_trained_model {load_trained_model}")
+        logger.info(f"initial episode: {initial}")
+        logger.info("--------")
 
         # set some seeds
         torch.manual_seed(settings.SEED)
@@ -230,7 +230,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
         torch.backends.cudnn.deterministic = True
 
         ############## Data Setup starts ##############
-        logging.info(f"--Data setup starting.")
+        logger.info(f"--Data setup starting.")
         # get training data
         train_data = df[(df.index >= train_beginning) & (df.index <= train_ending)]
         # if the train data index we want is not in the index, that means we have "run out of data"
@@ -247,18 +247,18 @@ def run_expanding_window_setup(df: pd.DataFrame,
         if testing_beginning in df.index and testing_ending not in df.index:
             testing_ending = df.index[-1]
             last_episode = True
-        logging.info("train data: ")
-        logging.info(train_data.head(3))
-        logging.info("val data: ")
-        logging.info(validation_data.head(3))
-        logging.info("test data: ")
-        logging.info(test_data.head(3))
-        logging.info(f"--Data setup ending.")
+        logger.info("train data: ")
+        logger.info(train_data.head(3))
+        logger.info("val data: ")
+        logger.info(validation_data.head(3))
+        logger.info("test data: ")
+        logger.info(test_data.head(3))
+        logger.info(f"--Data setup ending.")
         ############## Data Setup ends ##############
 
         ############## Environment Setup starts ##############
         # initialize training environment for the current episode
-        logging.info(f"--Create instance train env.")
+        logger.info(f"--Create instance train env.")
         if settings.STRATEGY_MODE == "ppo":
             # ppo from stable baselines returns an error when not used with the vec environment; however, since we only pass one env,
             # it doesn't actually make a difference (for games and complex problems, ppo is often used with parallel threads, but I did not
@@ -267,9 +267,9 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                                                  features_list=data_settings.FEATURES_LIST,
                                                                  day=train_beginning,
                                                                  iteration=current_episode_number,
-                                                                 # only used for logging.info
+                                                                 # only used for logger.info
                                                                  model_name=settings.STRATEGY_MODE,
-                                                                 # only used for logging.info
+                                                                 # only used for logger.info
                                                                  mode="train",
                                                                  hmax_normalize=env_params.HMAX_NORMALIZE,
                                                                  initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
@@ -282,14 +282,15 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                                                  previous_asset_price=last_asset_price_train,
                                                                  price_colname=data_settings.MAIN_PRICE_COLUMN,
                                                                  results_dir=results_dir,
-                                                                 reset_counter=0)])
+                                                                 reset_counter=0,
+                                                                 logger=logger)])
         elif settings.STRATEGY_MODE == "ppoCustomBase":
             env_train = FinancialMarketEnv(df=train_data,
                                             features_list=data_settings.FEATURES_LIST,
                                             day=train_beginning,
-                                            iteration=current_episode_number,  # only used for logging.info
+                                            iteration=current_episode_number,  # only used for logger.info
                                             model_name=settings.STRATEGY_MODE,
-                                            # only used for logging.info
+                                            # only used for logger.info
                                             mode="train",
                                             hmax_normalize=env_params.HMAX_NORMALIZE,
                                             initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
@@ -302,21 +303,22 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                             previous_asset_price=last_asset_price_train,
                                             price_colname=data_settings.MAIN_PRICE_COLUMN,
                                             results_dir=results_dir,
-                                            reset_counter=0)
+                                            reset_counter=0,
+                                            logger=logger)
         else:
             print("ERROR - no valid strategy mode passed. cannot create instance env_train.")
         env_train.seed(settings.SEED)
         env_train.action_space.seed(settings.SEED)
         # https://harald.co/2019/07/30/reproducibility-issues-using-openai-gym/
-        logging.info(f"--Create instance train env finished.")
+        logger.info(f"--Create instance train env finished.")
 
         # initialize validation environment
-        logging.info(f"--Create instance validation env.")
+        logger.info(f"--Create instance validation env.")
         if settings.STRATEGY_MODE == "ppo":
             env_val = DummyVecEnv([lambda: FinancialMarketEnv(df=validation_data,
                                                                   features_list=data_settings.FEATURES_LIST,
                                                                   day=validation_beginning,
-                                                                  iteration=str(current_episode_number),  # only used for logging.info
+                                                                  iteration=str(current_episode_number),  # only used for logger.info
                                                                   model_name=settings.STRATEGY_MODE,
                                                                   mode="validation",
                                                                   hmax_normalize=env_params.HMAX_NORMALIZE,
@@ -330,12 +332,13 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                                                   previous_asset_price=None,
                                                                   price_colname=data_settings.MAIN_PRICE_COLUMN,
                                                                   results_dir=results_dir,
-                                                                  reset_counter=0)])
+                                                                  reset_counter=0,
+                                                                  logger=logger)])
         elif settings.STRATEGY_MODE == "ppoCustomBase":
             env_val = FinancialMarketEnv(df=validation_data,
                                           features_list=data_settings.FEATURES_LIST,
                                           day=validation_beginning,
-                                          iteration=str(current_episode_number),  # only used for logging.info
+                                          iteration=str(current_episode_number),  # only used for logger.info
                                           model_name=settings.STRATEGY_MODE,
                                           mode="validation",
                                           hmax_normalize=env_params.HMAX_NORMALIZE,
@@ -349,16 +352,17 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                           previous_asset_price=None,
                                           price_colname=data_settings.MAIN_PRICE_COLUMN,
                                           results_dir=results_dir,
-                                          reset_counter=0)
+                                          reset_counter=0,
+                                          logger=logger)
         env_val.seed(settings.SEED)
         env_val.action_space.seed(settings.SEED)
 
         # reset validation environment to obtain observations from the validation environment
         obs_val = env_val.reset()
-        logging.info(f"--Create instance validation env finisher.")
+        logger.info(f"--Create instance validation env finisher.")
 
         # make testing environment
-        logging.info(f"--Create instance test env.")
+        logger.info(f"--Create instance test env.")
         if settings.STRATEGY_MODE == "ppo":
             env_test = DummyVecEnv([lambda: FinancialMarketEnv(df=test_data,
                                                               day=testing_beginning,
@@ -379,7 +383,8 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                                               iteration=str(current_episode_number),
                                                               price_colname=data_settings.MAIN_PRICE_COLUMN,
                                                               results_dir=results_dir,
-                                                              reset_counter=0)])
+                                                              reset_counter=0,
+                                                              logger=logger)])
         elif settings.STRATEGY_MODE == "ppoCustomBase":
             env_test = FinancialMarketEnv(df=test_data,
                                           day=testing_beginning,
@@ -400,7 +405,8 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                           iteration=str(current_episode_number),
                                           price_colname=data_settings.MAIN_PRICE_COLUMN,
                                           results_dir=results_dir,
-                                          reset_counter=0)
+                                          reset_counter=0,
+                                          logger=logger)
 
         # get last asset prices from the test dataset; these are going to be used as initial state in the next episode
         # for the test set
@@ -410,12 +416,12 @@ def run_expanding_window_setup(df: pd.DataFrame,
         env_test.action_space.seed(settings.SEED)
         # reset environment to obtain first observations (state representation vector)
         obs_test = env_test.reset()
-        logging.info(f"--Create instance test env finished.")
+        logger.info(f"--Create instance test env finished.")
         ############## Environment Setup ends ##############
 
 
         ############## Get Model/ Algorithm ##############
-        logging.info(f"--Create instance for ppo model.")
+        logger.info(f"--Create instance for ppo model.")
         ppo_model = get_model(train_environment=env_train,
                               validation_environment=env_val,
                               number_train_data_points=len(train_data.index.unique()),
@@ -427,39 +433,40 @@ def run_expanding_window_setup(df: pd.DataFrame,
                               val_env_firstday=validation_data.index[0],
                               load_trained_model=load_trained_model,
                               trained_model_save_path=trained_model_save_path,
-                              current_episode_number=current_episode_number)
+                              current_episode_number=current_episode_number,
+                              logger=logger)
 
-        training_timesteps = len(train_data.index.unique()) * 2 # iterate 5 times over the data
+        training_timesteps = len(train_data.index.unique()) #* 2 # iterate 5 times over the data
         if not settings.RETRAIN_DATA and current_episode_number > 1:
             if settings.STRATEGY_MODE == "ppoCustomBase":
                 #training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN // 4 # todo: make multiple of data set length
-                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                logger.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
                              f"\ntotal timesteps to train on: {training_timesteps}")
             elif settings.STRATEGY_MODE == "ppo":
                 #training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS // 4 # todo: make multiple of data set length
-                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                logger.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
                              f"\ntotal timesteps to train on: {training_timesteps}")
         else:
             if settings.STRATEGY_MODE == "ppoCustomBase":
                 #training_timesteps = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN
-                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                logger.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
                              f"\ntotal timesteps to train on: {training_timesteps}")
             elif settings.STRATEGY_MODE == "ppo":
                 #training_timesteps = agent_params.ppo.TRAINING_TIMESTEPS
-                logging.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
+                logger.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:"
                              f"\ntotal timesteps to train on: {training_timesteps}")
-        logging.info(f"--Create instance for ppo model finished.")
+        logger.info(f"--Create instance for ppo model finished.")
 
 
         ############## Training starts ##############
-        logging.info(f"##### TRAINING")
-        logging.info(f"---{settings.STRATEGY_MODE.upper()} training from: "
+        logger.info(f"##### TRAINING")
+        logger.info(f"---{settings.STRATEGY_MODE.upper()} training from: "
                      f"{train_beginning} to {train_ending}, "f"(i={current_episode_number}).")
 
         train_start = time.time()
         ppo_model.learn(total_timesteps=training_timesteps)
         train_end = time.time()
-        logging.info(f"Training time ({settings.STRATEGY_MODE.upper()}): " + str((train_end - train_start) / 60) + " minutes.")
+        logger.info(f"Training time ({settings.STRATEGY_MODE.upper()}): " + str((train_end - train_start) / 60) + " minutes.")
 
         # save trained model
         # (if custom PPO, only the neural network is going to be saved, not any other metadata / parameters
@@ -489,8 +496,8 @@ def run_expanding_window_setup(df: pd.DataFrame,
         ############## Training ends ##############
 
         ############## Testing starts ##############
-        logging.info(f"##### TESTING")
-        logging.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
+        logger.info(f"##### TESTING")
+        logger.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
                         f"{testing_beginning} to {testing_ending}, (ep={current_episode_number}).======")
 
         test_start = time.time()
@@ -516,16 +523,7 @@ def run_expanding_window_setup(df: pd.DataFrame,
                 df_last_state.to_csv(f'{results_dir}/last_state/last_state_test_'
                                      f'{settings.STRATEGY_MODE}_ep{current_episode_number}.csv', index=False)
         test_end = time.time()
-        logging.info(f"Testing time: " + str((test_end - test_start) / 60) + " minutes")
-
-        #last_test_state, lattest = DRL_predict(trained_model=model_agent,
-        #                                     test_data=test_data,
-        #                                     test_env=env_test,
-        #                                     test_obs=obs_test,
-        #                                     mode="test",
-        #                                     iteration=current_episode_number,
-        #                                     model_name=settings.STRATEGY_MODE,
-        #                                     results_dir=results_dir)
+        logger.info(f"Testing time: " + str((test_end - test_start) / 60) + " minutes")
 
         ############## Testing ends ##############
 
@@ -560,37 +558,32 @@ def run_expanding_window_setup(df: pd.DataFrame,
         current_episode_number += 1
 
         # log some info
-        logging.info(f"---env resets in episode {current_episode_number}---")
-        logging.info("train: ")
+        logger.info(f"---env resets in episode {current_episode_number}---")
+        logger.info("train: ")
         _, _, _, reset_counts, final_state_counter, _ = env_train.render()
-        logging.info(f"env resets: {reset_counts}")
-        logging.info(f"env final_state_counter: {final_state_counter}")
-        logging.info(f"train data: {train_beginning}:{train_ending}")
-        logging.info("validation: ")
+        logger.info(f"env resets: {reset_counts}")
+        logger.info(f"env final_state_counter: {final_state_counter}")
+        logger.info(f"train data: {train_beginning}:{train_ending}")
+        logger.info("validation: ")
         _, _, _, reset_counts, final_state_counter, _ = env_val.render()
-        logging.info(f"validation env resets: {reset_counts}")
-        logging.info(f"env final_state_counter: {final_state_counter}")
-        logging.info(f"validation data: {validation_beginning}:{validation_ending}")
-        logging.info("test: ")
+        logger.info(f"validation env resets: {reset_counts}")
+        logger.info(f"env final_state_counter: {final_state_counter}")
+        logger.info(f"validation data: {validation_beginning}:{validation_ending}")
+        logger.info("test: ")
         _, _, _, reset_counts, final_state_counter, _ = env_test.render()
-        logging.info(f"test env resets: {reset_counts}")
-        logging.info(f"env final_state_counter: {final_state_counter}")
-        logging.info(f"test data: {testing_beginning}:{testing_ending}\n")
+        logger.info(f"test env resets: {reset_counts}")
+        logger.info(f"env final_state_counter: {final_state_counter}")
+        logger.info(f"test data: {testing_beginning}:{testing_ending}\n")
 
-
-    #############################################################
-    #                PLOTS / PERFORMANCE CALCULATION            #
-    #############################################################
     episodes_end = time.time()
-    logging.info(f"{settings.STRATEGY_MODE} "
+    logger.info(f"{settings.STRATEGY_MODE} "
                  f"strategy for one seed took: {str((episodes_end - episodes_start) / 60)}, minutes.\n")
-
     #############################################################
     #                       BACKTESTING                         #
     #############################################################
     # first we also need to create directories
 
-    logging.info("=================Backtesting================")
+    logger.info("=================Backtesting================")
 
     os.makedirs(f"{results_dir}/backtest/buy_trades")
     os.makedirs(f"{results_dir}/backtest/cash_value")
@@ -609,8 +602,8 @@ def run_expanding_window_setup(df: pd.DataFrame,
 
     # get data for backtesting
     backtesting_data = df[(df.index >= backtesting_beginning) & (df.index <= backtesting_ending)]
-    logging.info("backtest data: ")
-    logging.info(backtesting_data.head(3))
+    logger.info("backtest data: ")
+    logger.info(backtesting_data.head(3))
 
     # make testing environment
     env_backtesting = FinancialMarketEnv(df=backtesting_data,
@@ -630,18 +623,19 @@ def run_expanding_window_setup(df: pd.DataFrame,
                                           iteration="",
                                           price_colname=data_settings.MAIN_PRICE_COLUMN,
                                           results_dir=os.path.join(results_dir, "backtest"),
-                                          reset_counter=0)
+                                          reset_counter=0,
+                                          logger=logger)
 
     env_backtesting.seed(settings.SEED)
     env_backtesting.action_space.seed(settings.SEED)
     # reset environment to obtain first observations (state representation vector)
     obs_backtest = env_backtesting.reset()
-    logging.info("created instance env_backtesting and reset env.")
+    logger.info("created instance env_backtesting and reset env.")
     ############## Environment Setup ends ##############
 
     ############## Backtesting starts ##############
-    logging.info(f"##### STARTING BACKTESTING")
-    logging.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
+    logger.info(f"##### STARTING BACKTESTING")
+    logger.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
                  f"{backtesting_beginning} to {backtesting_ending}, (ep={current_episode_number}).======")
 
     backtest_start = time.time()
@@ -657,4 +651,17 @@ def run_expanding_window_setup(df: pd.DataFrame,
         if dones:
             break
     backtest_end = time.time()
-    logging.info(f"Backtesting time: " + str((backtest_end - backtest_start) / 60) + " minutes")
+    logger.info(f"Backtesting time: " + str((backtest_end - backtest_start) / 60) + " minutes")
+
+
+    #############################################################
+    #         PERFORMANCE CALCULATION FOR CURRENT SEED          #
+    #############################################################
+    perf_start = time.time()
+    calculate_performance_measures(run_path=results_dir,
+                                   level="seed",
+                                   seed=settings.SEED,
+                                   mode="test",
+                                   logger=logger)
+    perf_end = time.time()
+    logger.info(f"Performance calculation time: " + str((perf_start - perf_end) / 60) + " minutes")
