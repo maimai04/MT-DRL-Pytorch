@@ -90,8 +90,8 @@ def add_technical_indicator_with_StockStats(df,
 
     Indicators description:
     macd    :   moving average convergence divergence
-                trend-following momentum indicator, shows relationship between two moving averages of an asset's price
-                macd is calculted by subtracting a 26-period (e.g. day) exponential moving average (EMA) from the
+                trend-following momentum indicator, shows relationship between two moving averages of an asset's price.
+                macd is calculated by subtracting a 26-period (e.g. day) exponential moving average (EMA) from the
                 12-period EMA
                 Interpretation: # todo: ?
     rsi     :   relative strength index
@@ -136,11 +136,6 @@ def add_technical_indicator_with_StockStats(df,
         logging.info("add_technical_indicator_with_StockStats(): No features specified to add.")
 
     return df
-
-# todo: rm
-def add_technical_indicator_with_otherFunc(df) -> pd.DataFrame:
-    pass
-
 
 def add_other_features(df,
                        features=["returns_volatility"],
@@ -191,180 +186,27 @@ def add_other_features(df,
             temp_ind = pd.DataFrame(temp_ind)
             temp_df = temp_df.append(temp_ind, ignore_index=True)
         df["log_return_daily"] = temp_df
+    if "obv" in features:
+        # calculate OBV for volume
+        # see also: https://stackoverflow.com/questions/52671594/calculating-stockss-on-balance-volume-obv-in-python
+        # https://corporatefinanceinstitute.com/resources/knowledge/trading-investing/on-balance-volume-indicator-obv/
+        # the obv is calculated like this:
+        # take the sign of the differenced closing price
+        # multiply this with the volume
+        # the nan are filled with 0
+        # then we take the cumulative sum over time
+        # so basically, the obv = previous_day_obv + /- volume (if no change in price, it is 0* volume, hence only
+        # previous-day obv)
+        temp_df = pd.DataFrame()
+        for i in range(len(unique_ticker)):
+            temp_ind = (np.sign(df[df.tic == unique_ticker[i]]["adjcp"].diff()) * df[df.tic == unique_ticker[i]]["volume"]).fillna(0).cumsum()
+            temp_ind = pd.DataFrame(temp_ind)
+            temp_df = temp_df.append(temp_ind, ignore_index=True)
+        df["obv"] = temp_df
     else:
         logging.info("add_other_features(): No features specified to add.")
     return df
 
 
-def add_LSTM_features(df,
-                     ann_model=None,
-                     combine_with_df=True,
-                     ) -> pd.DataFrame:
-    """
-    @param df:
-    @param input_columns: list of columns fom the df to be used as lstm input (can be just price of each ticker,
-                          or also technical indicators etc.
-    @return:
-    """
-
-    # call trained ann model passed to function and get features
-    # append features to original df
-    if combine_with_df is False:
-        # only combine the datadate and tic columns of the old dataframe with the new features
-        pass
-
-    else:
-        # combine whole input df with all features created by the lstm
-        pass
-
-    return df
 
 
-# Note: packed the below functions in one (don't really need two), was add_turbulence() and calcualte_turbuelnce() (merged them)
-
-def split_data_by_date(df,
-                       start,
-                       end,
-                       date_column="datadate",
-                       asset_name_column="tic"
-                       ) -> pd.DataFrame:  # OLD:renamed form data_split
-    """
-    split the dataset into training or testing using date.
-    Used later mainly for train / validation / test split of the time series.
-
-    INPUT: date subset df, sorted by date, then ticker,
-    OUTPUT: date subset df, sorted by date, then ticker, and the index column is not [0,1,2,3,4,...] anymore
-            but [0,0,0,0,...1,1,1,1,...,2,2,2,2,2...] etc. (datadate factorized, same index number for same datadate)
-            This dataset is used then in the environment. So when we use day=0 in the env, we get day 0 for each ticker,
-            hence multiple lines, not just one.
-    @param df:
-    @param start:
-    @param end:
-    @return:
-    """
-    # subsetting the dataframe based on date (start and end date)
-    data = df[(df[date_column] >= start) & (df[date_column] < end)]
-    # sorting the dataframe based on date, then based on ticker (company)
-    # ignore_index=True ensures the new index will be re-labeled again in a sorted manner (1,2,3,...),
-    # because by sorting the data set by datadate and tic, the initial index will not be sorted anymore
-    #data = data.sort_values([date_column, asset_name_column])  # , ignore_index=True) # todo: not really needed, since index overwritten later anyways
-    # data  = data[final_columns]
-    # factorize the index of the dataframe, based on datadate
-    # for the same datadate, the index will be the same, starting at 0 for the first date in the dataframe
-    # .factorize returns a tuple of two lists; new index values, corresponding datadate values.
-    # we only need the index values, hence the [0]
-    #data.index = data[date_column].factorize()[0]
-
-    return data
-
-
-############################
-##   COMBINED FUNCTIONS   ##
-############################
-
-# todo: was preprocess_data
-def data_preprocessing_pipeline(  # BASE PARAMS FOR LOADING THE DATA SET - with load_dataset()
-        raw_data_file=paths.RAW_DATA_FILE, # Note raw data file is ordered by ticker, then by date
-        col_subset=data_settings.RAW_DF_COLS_SUBSET,
-        date_subset="datadate",
-        date_subset_startdate=settings.STARTDATE_TRAIN,
-
-        # PASSING NAMES OF OPTIONAL FUNCTIONS TO BE USED
-        calculate_price_volume_func="calculate_price_volume_WhartonData",
-        add_technical_indicator_func="add_technical_indicator_with_StockStats",
-        add_other_features_func=None,  # "add_other_features",
-        add_LSTM_features_func=None,
-
-        # PASSING PARAMETERS FOR EACH OPTIONAL FUNCTION
-        # params for calculate_price_function()
-        calculate_price_volume_func_params={"new_cols_subset": data_settings.NEW_COLS_SUBSET,
-                                            "target_subset": None},
-        # new_cols_subset=data_settings.NEW_COLS_SUBSET,
-        # target_subset=None,
-
-        # params for add_technical_indicator_func
-        add_technical_indicator_func_params={"technical_indicators_list": ["macd", "rsi_30", "cci_30", "dx_30"]},
-        # technical_indicators_list=["macd", "rsi_30", "cci_30", "dx_30"],
-
-        # params for adding other features (e.g. volatility)
-        add_other_features_func_params={"feature": ["returns_volatility", "log_return_daily"],
-                                        "window_days": 7},
-
-        # params for adding ANN-created features
-        add_LSTM_features_func_params={},
-        ) -> pd.DataFrame:
-    """
-    Data preprocessing pipeline: based on specifications, call preprocessing functions defined in preprocessors.py
-    in a certain order and return a pre-processed dataframe.
-
-    Note: TRAINING_DATA_FILE (raw df) is ordered based on ticker, not based on data;
-    Example; raw df, ordered by ticker, then by date
-        1   A
-        2   A
-        3   A
-        1   B
-        2   B
-        3   B
-
-    """
-    # load the raw data set
-    df = load_dataset(file_path=raw_data_file,
-                      col_subset=col_subset,
-                      date_subset=date_subset,
-                      date_subset_startdate=date_subset_startdate)
-
-    # get data after a specified date (originally was after 2009)
-    # df = df[df["datadate"] >= startdate] # integrate din load_dataset
-    # calculate adjusted price, open, high and low, and trading volume for each day
-    logging.info("DATA PREPROCESSING PIPELINE:")
-    logging.info("----------------------------")
-    if calculate_price_volume_func == "calculate_price_volume_WhartonData":
-        logging.info("data: Calculating price / volume on data from WhartonDB.")
-        df = calculate_price_volume_WhartonData(df=df,
-                                                new_cols_subset=calculate_price_volume_func_params["new_cols_subset"],
-                                                target_subset=calculate_price_volume_func_params["target_subset"])
-    elif calculate_price_volume_func == "calculate_price_volume_OtherData":
-        logging.info("data: Calculating price / volume on alternative data (not WhartonDB).")
-        df = calculate_price_volume_OtherData(df=df, )  # todo
-    else:
-        logging.info("DataPrep: No function specified for calculating price / volume from raw data.")
-
-    # add technical indicators using the stockstats package
-    if add_technical_indicator_func == "add_technical_indicator_with_StockStats":
-        logging.info("data: technical indicators used (using stockstats package).")
-        df = add_technical_indicator_with_StockStats(df=df,
-                                                     technical_indicators_list=add_technical_indicator_func_params[
-                                                         "technical_indicators_list"])
-    elif add_technical_indicator_func == "add_technical_indicator_with_otherFunc":
-        logging.info("DataPrep: technical indicators used (using other function).")
-        df = add_technical_indicator_with_otherFunc(df=df,
-                                                    )
-    else:
-        logging.info("DataPrep: No technical indicators used (because no function specified).")
-
-    # add additional features such as volatility etc.
-    if add_other_features_func == "add_other_features":
-        logging.info("DataPrep: Added additional/other features (such as vola etc).")
-        df = add_other_features(df=df,
-                                features=add_other_features_func_params["feature"],
-                                window_days=add_other_features_func_params["window_days"],
-                                price_colum=data_settings.MAIN_PRICE_COLUMN,
-                                asset_name_column=data_settings.ASSET_NAME_COLUMN
-                                )
-    else:
-        logging.info("DataPrep: No additional features added (because no function specified).")
-
-    # add additional features using an artificial neural network (trained model)
-    if add_LSTM_features_func == "add_LSTM_features":
-        logging.info("DataPrep: Adding additional features created with ANN.")
-        df = add_LSTM_features(df=df,
-                              ann_model=None,
-                              combine_with_df=True)
-    else:
-        logging.info("DataPrep: No ANN-created features added.")
-    df = df.sort_values(['datadate', 'tic']).reset_index(drop=True)
-    # fill the missing values at the beginning
-    df.fillna(method='bfill',
-              inplace=True)  # TODO: this is for the tech indicators at the beginning, but could also drop!
-
-    return df

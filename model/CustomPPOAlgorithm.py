@@ -3,15 +3,23 @@ from torch import nn
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# import own libraries
+# import own libraries (using try-except in the case files have been uploaded separately to google Colab) # todo remove try-excepts
 try:
     from config.config import *
 except:
     from config import *
-from model.CustomOnPolicyBuffer import OnPolicyBuffer
-from model.CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
+try:
+    from model.CustomOnPolicyBuffer import OnPolicyBuffer
+except:
+    import CustomOnPolicyBuffer
+    from CustomOnPolicyBuffer import OnPolicyBuffer
+try:
+    from model.CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
     init_weights_actor_net, init_weights_feature_extractor_net, init_weights_critic_net
-
+except:
+    import CustomActorCriticNets
+    from CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
+    init_weights_actor_net, init_weights_feature_extractor_net, init_weights_critic_net
 ########################################################################
 # CUSTOM PPO ALGORITHM                                                 #
 ########################################################################
@@ -33,8 +41,6 @@ class PPO_algorithm():
                  env_train,
                  brain,
                  buffer,
-                 # path where loss curves etc. are saved
-                 performance_save_path: str,
                  current_episode: int,
                  # optional validation env for e.g. early stopping based on average reward
                  env_validation=None,
@@ -63,6 +69,8 @@ class PPO_algorithm():
                  train_env_firstday: int=0,
                  val_env_firstday: int=0,
                  logger=None,
+                 # path where loss curves etc. are saved
+                 performance_save_path: str = None,
                  ):
         """
         Here, the variables and hyperparameters are initialized.
@@ -116,11 +124,11 @@ class PPO_algorithm():
         "b" stands for "buffer"
         """
         # get first state / observation from the environment by resetting it
-        self.logger.info("enffirstday: "+str(self.Env_firstday))
-        obs = self.Env.reset(day=self.Env_firstday, initial=True)
-        #self.logger.info("train env reset, first obs: ", obs)
+        self.logger.info("env_firstday: "+str(self.Env_firstday))
+        obs = self.Env.reset(day=self.Env_firstday)#, initial=True)
+        self.logger.info("train env reset, first obs: ")
+        self.logger.info(obs[0:100]) # to check if the observations are correct
         #self.logger.info("data ", self.Env.data)
-
 
         # reset the Buffer in order to empty storage from previously collected trajectories
         self.OnPolicyBuffer.reset()
@@ -146,7 +154,7 @@ class PPO_algorithm():
                 obs = torch.as_tensor(obs, dtype=torch.float)
                 # get value estimate, sampled action and actions log probabilities from brain,
                 # which uses actor and critic architecture
-                V_estimate, actions, actions_log_prob, _, _ = self.Brain.forward_pass(observation=obs)
+                V_estimate, actions, actions_log_prob, _, _, stdev = self.Brain.forward_pass(observation=obs)
                 # Note: this yields a
                 # value estimate for the current observation (state) => one value, as tensor of dim (1,)
                 # actions for the current obs (state), e.g. one weight for each stock, as tensor of dim (n_assets,)
@@ -157,13 +165,23 @@ class PPO_algorithm():
             # note: must use .detach() on torch.tensors before converting them to numpy because it yields en error otherwise
             # why: because we cannot call numpy on a tensor that requires gradient (requires_grad = True)
             actions = actions.numpy()#.detach().numpy() # .cpu()
+            #print("actions from net: ")
+            #print(actions)
 
             # CLIP ACTIONS
             # this needs to be done because actions are sampled from a Distribution (here: Gaussian,
             # but could also use other, like e.g. Beta distribution), and that leads to actions not
             # necessarily being within the boundaries of the defined action space (note: I am using gym.Box for action space)
             # clipping is used by most implementations online, including stable baselines
-            actions_clipped = np.clip(actions, self.Env.action_space.low, self.Env.action_space.high)
+            if env_params.STEP_VERSION == "paper":
+                # clip actions to be between action space limits (in paper [-1,1]
+                actions_clipped = np.clip(actions, self.Env.action_space.low, self.Env.action_space.high)
+            elif env_params.STEP_VERSION == "newNoShort":
+                # apply softmax again in sampled actions in order to make a vector of target weights
+                # which are all between [0,1] and sum up to one together.
+                actions_clipped = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
+            #print("actions_clipped: ")
+            #print(actions_clipped)
 
             # TAKE A STEP in the environment with the sampled action
             # in order to obtain the new state, a reward and a mask (done; True if
@@ -195,16 +213,6 @@ class PPO_algorithm():
             if current_timesteps_collected in list(range(0, total_timesteps_to_collect, 1000)) + \
                     [total_timesteps_to_collect]:
                 self.logger.info(f"current timesteps collected: {current_timesteps_collected + 1} / max. {total_timesteps_to_collect}")
-                # self.logger.info("\nactions before clipping: ")
-                # self.logger.info(actions)
-                # self.logger.info("\nactions after clipping: ")
-                # self.logger.info(actions_clipped)
-                # self.logger.info(f"\naction log probs: ")
-                # self.logger.info(actions_log_prob)
-                # self.logger.info(f"\nvalue estimate: {V_estimate}")
-                #self.logger.info(f"\nreward : {reward}")
-                #self.logger.info("saved old log probs: ")
-                #self.logger.info(actions_log_prob)
             if done:
                 self.logger.info("experience collection finished (because episode finished  (done)). ")
                 break
@@ -213,7 +221,7 @@ class PPO_algorithm():
         # we need the terminal value estimate in order tp compute the advantages below
         with torch.no_grad():
             obs = torch.as_tensor(new_obs, dtype=torch.float)
-            V_terminal_estimate, _, _, _, _ = self.Brain.forward_pass(observation=obs)
+            V_terminal_estimate, _, _, _, _, stdev = self.Brain.forward_pass(observation=obs)
 
         self.OnPolicyBuffer.calculate_and_store_advantages(terminal_V_estimate=V_terminal_estimate,
                                                            gamma=self.gamma,
@@ -271,6 +279,8 @@ class PPO_algorithm():
             entropy_loss_all_epochs = []
             combined_loss_all_epochs = []
             advantages_all_epochs = []
+            standard_deviations_all_epochs = []
+            action_means_all_epochs = []
 
             # now we train for multiple epochs
             for epoch in range(1, self.num_epochs + 1):
@@ -286,6 +296,8 @@ class PPO_algorithm():
                 entropy_loss_of_epoch = []
                 combined_loss_of_epoch = []
                 advantages_of_epoch = []
+                standard_deviations_of_epoch = []
+                action_means_of_epoch = []
 
                 # get batch from each tensor of batches
                 # Note: normally, "batch" means the whole training data, here
@@ -307,20 +319,6 @@ class PPO_algorithm():
                         self.logger.info(f"sample batch (observations), (len: {len(batch_obs)})")
                         self.logger.info(batch_obs)
 
-                    #if batch_num == 1:
-                        #self.logger.info("getting old log probs as batch: ")
-                        #self.logger.info(batch_actions_log_probs)
-                    #self.logger.info("batch_obs")
-                    #self.logger.info(batch_obs)
-                    #self.logger.info("batch_actions")
-                    #self.logger.info(batch_actions)
-                    #self.logger.info("batch log probs")
-                    #self.logger.info(batch_actions_log_probs)
-                    #self.logger.info("batch_returns")
-                    #self.logger.info(batch_returns)
-                    #self.logger.info("batch_advantages")
-                    #self.logger.info(batch_advantages)
-
                     # Standardizing advantage estimates (creating z-score) across each batch
                     # (not in the paper)
                     # many implementations use a normalized version because it makes convergence
@@ -340,7 +338,7 @@ class PPO_algorithm():
                     # as when we collected trajectories into the OnPolicyBuffer, hence the probabilities ratio (calculated later) will be 1
                     # NOTE: this time we should not do the forward pass with "with torch.no_grad()", because we will later call backward()
                     # and want to be able to compute the gradients in order to update our policy
-                    new_V_estimate, current_action_new_log_prob, action_distr_entropy, _, _ = \
+                    new_V_estimate, current_action_new_log_prob, action_distr_entropy, action_means, _, stdev = \
                         self.Brain.forward_pass(observation=torch.as_tensor(batch_obs, dtype=torch.float),
                                                 actions=old_actions,
                                                 evaluation_mode=True)  # evaluation mode must be true: see documentation in Brain class
@@ -448,6 +446,8 @@ class PPO_algorithm():
                     critic_loss_of_epoch.append(critic_loss.detach())
                     entropy_loss_of_epoch.append(entropy_loss.detach())
                     combined_loss_of_epoch.append(total_loss.detach())
+                    standard_deviations_of_epoch.append(stdev)
+                    action_means_of_epoch.append(np.array(action_means.detach()))
 
                     #update learning timesteps only for first (or any, just only one) epoch,
                     # because we only want to count the data samples we train on (not how often we trained on them)
@@ -481,35 +481,48 @@ class PPO_algorithm():
                 critic_loss_all_epochs.append(critic_loss_of_epoch)
                 entropy_loss_all_epochs.append(entropy_loss_of_epoch)
                 combined_loss_all_epochs.append(combined_loss_of_epoch)
+                standard_deviations_all_epochs.append(standard_deviations_of_epoch) # one for each batch
+                action_means_all_epochs.append(action_means_of_epoch)
+                print("action means all epochs:")
+                print(action_means_all_epochs)
 
                 self.logger.info(f"---EPOCH: {epoch} / {self.num_epochs} done.")
+                self.logger.info(f"total Epoch loss: {np.sum(combined_loss_of_epoch)}")
+                self.logger.info(f"average total Epoch loss: {np.mean(combined_loss_of_epoch)}")
 
             # AT THE END OF ALL EPOCHS
             # after all 10 (or other) epochs, we save the data to csv
-            for li, liname in zip([advantages_all_epochs, prob_ratio_all_epochs, surr_loss_1_all_epochs,
-                                   surr_loss_2_all_epochs, surr_loss_all_epochs],
-                                  ["advantages_all_epochs", "prob_ratio_all_epochs", "surr_loss_1_all_epochs",
-                                   "surr_loss_2_all_epochs", "surr_loss_all_epochs"]):
-                pd.DataFrame(np.transpose(li),
-                         columns=epoch_colnames).to_csv(os.path.join(self.performance_save_path,
-                                                                         f"{liname}_"
-                                                                         f"ep{self.current_episode}_"
-                                                                         "LearningTimestepsDone_"
-                                                                         f"{learning_timesteps_done}.csv"))
-            pd.DataFrame({"actor_loss": np.array(actor_loss_all_epochs).flatten(),
-                          "critic_loss": np.array(critic_loss_all_epochs).flatten(),
-                          "entropy_loss": np.array(entropy_loss_all_epochs).flatten(),
-                          "combined_loss": np.array(combined_loss_all_epochs).flatten(),
-                          }).to_csv(os.path.join(self.performance_save_path,
-                                                 f"train_performances_"
-                                                 f"ep{self.current_episode}_"
-                                                 f"LearningTimestepsDone_{learning_timesteps_done}.csv"))
+            if self.performance_save_path != None:
+                for li, liname in zip([advantages_all_epochs, prob_ratio_all_epochs, surr_loss_1_all_epochs,
+                                       surr_loss_2_all_epochs, surr_loss_all_epochs],
+                                      ["advantages_all_epochs", "prob_ratio_all_epochs", "surr_loss_1_all_epochs",
+                                       "surr_loss_2_all_epochs", "surr_loss_all_epochs"]):
+                    pd.DataFrame(np.transpose(li),
+                             columns=epoch_colnames).to_csv(os.path.join(self.performance_save_path,
+                                                                             f"{liname}_"
+                                                                             f"ep{self.current_episode}_"
+                                                                             "LearningTimestepsDone_"
+                                                                             f"{learning_timesteps_done}.csv"))
+                pd.DataFrame({"actor_loss": np.array(actor_loss_all_epochs).flatten(),
+                              "critic_loss": np.array(critic_loss_all_epochs).flatten(),
+                              "entropy_loss": np.array(entropy_loss_all_epochs).flatten(),
+                              "combined_loss": np.array(combined_loss_all_epochs).flatten(),
+                              "action_means": np.array(action_means_all_epochs).flatten(),
+                              "standard_deviations":  np.array(standard_deviations_all_epochs).flatten(),
+                              }).to_csv(os.path.join(self.performance_save_path,
+                                                     f"train_performances_"
+                                                     f"ep{self.current_episode}_"
+                                                     f"LearningTimestepsDone_{learning_timesteps_done}.csv"))
 
-            self.logger.info(f"Validation beginning.")
+            self.logger.info("-Brain- parameters after training: ")
+            for param in self.Brain.parameters():
+                self.logger.info(param)
+
             # after all 10 epochs, if we have passed a validation env, we do some "out of sample testing"
             if self.EnvVal is not None:
+                self.logger.info(f"Validation beginning.")
                 self._validation()
-            self.logger.info(f"Validation ended.")
+                self.logger.info(f"Validation ended.")
 
     def _validation(self) -> None:
         validation_rewards = []
@@ -521,8 +534,8 @@ class PPO_algorithm():
             if val_done:
                 break
         self.logger.info(f"validation mean reward: {np.mean(validation_rewards)}")
+        self.logger.info(f"validation total reward: {np.mean(validation_rewards)}")
         return None # Note: rewards are already saved to csv by the validation env
-
 
     def predict(self, new_obs):
         new_obs = torch.as_tensor(new_obs, dtype=torch.float)

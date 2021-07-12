@@ -1,5 +1,4 @@
 import sys
-
 from pipeline.run_pipeline import *
 from config.config import *
 from config.dataprep_config import *
@@ -47,7 +46,6 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
                 results_dir: str = "",
                 trained_dir: str = "",
                 ) -> list:
-    # todo: create support_functions and move there
     """
     Functin to create directories at the beginning of each run, based on paths specified in the config.py file,
     used in the run.py file.
@@ -128,9 +126,14 @@ def config_logging_to_txt(results_subdir,
                         f"STARTDATE_TRAIN      : {settings.STARTDATE_TRAIN}\n"
                         f"ENDDATE_TRAIN        : {settings.ENDDATE_TRAIN}\n"
                         f"ROLL_WINDOW          : {settings.ROLL_WINDOW}\n"
+                        f"STARTDATE_BT_BULL    : {settings.STARTDATE_BACKTESTING_BULL}\n"
+                        f"ENDDATE_BT_BULL      : {settings.ENDDATE_BACKTESTING_BULL}\n"
+                        f"STARTDATE_BT_BEAR    : {settings.STARTDATE_BACKTESTING_BEAR}\n"
+                        f"ENDDATE_BT_BEAR      : {settings.ENDDATE_BACKTESTING_BEAR}\n"
                         "------------------------------------\n"
                         f"ENVIRONMENT VARIABLES\n"
                         "------------------------------------\n"
+                        f"STEP_VERSION             : {env_params.STEP_VERSION}\n"
                         f"HMAX_NORMALIZE           : {env_params.HMAX_NORMALIZE}\n"
                         f"INITIAL_CASH_BALANCE     : {env_params.INITIAL_CASH_BALANCE}\n"
                         f"TRANSACTION_FEE_PERCENT  : {env_params.TRANSACTION_FEE_PERCENT}\n"
@@ -152,7 +155,20 @@ def config_logging_to_txt(results_subdir,
                         f"SUBDIR_NAMES             : {paths.SUBSUBDIR_NAMES}\n"
                         f"PREPROCESSED_DATA_FILE   : {paths.PREPROCESSED_DATA_FILE}\n"
                         f"RESULTS_DIR              : {results_subdir}\n"
-                        f"TRAINED_MODEL_DIR        : {trained_subdir}\n")  # trained_model_dir
+                        f"TRAINED_MODEL_DIR        : {trained_subdir}\n"
+                        "------------------------------------\n"
+                        f"HYPERPARAMETER TUNING\n"
+                        "------------------------------------\n"
+                        f"now_hptuning              : {hptuning_config.now_hptuning}\n"
+                        f"only_hptuning             : {hptuning_config.only_hptuning}\n"
+                        f"--parameters to tune--\n"
+                        f"GAMMA_LIST                : {hptuning_config.GAMMA_LIST}\n"
+                        f"GAE_LAMBDA_LIST           : {hptuning_config.GAE_LAMBDA_LIST}\n"
+                        f"CLIP_EPSILON_LIST         : {hptuning_config.CLIP_EPSILON_LIST}\n"
+                        f"CRITIC_LOSS_COEF_LIST     : {hptuning_config.CRITIC_LOSS_COEF_LIST}\n"
+                        f"ENTROPY_LOSS_COEF_LIST    : {hptuning_config.ENTROPY_LOSS_COEF_LIST}\n"
+                        )
+
     if settings.STRATEGY_MODE == "ppoCustomBase":
         with open(txtfile_path, "a") as text_file:
             text_file.write(f"NET_VERSION                   : {agent_params.ppoCustomBase.NET_VERSION}\n"
@@ -168,7 +184,7 @@ def config_logging_to_txt(results_subdir,
                             f"ENTROPY_LOSS_COEF             : {agent_params.ppoCustomBase.ENTROPY_LOSS_COEF}\n"
                             f"MAX_GRADIENT_NORMALIZATION    : {agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION}\n"
                             f"TOTAL_TIMESTEPS_TO_COLLECT    : {agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT}\n"
-                            f"TOTAL_TIMESTEPS_TO_TRAIN      : {agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_TRAIN}\n"
+                            f"TOTAL_TIMESTEPS_TO_TRAIN      : {agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN}\n"
                             )
     elif settings.STRATEGY_MODE == "ppo":
         with open(txtfile_path, "a") as text_file:

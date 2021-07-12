@@ -37,7 +37,7 @@ class FeatureExtractorNet(nn.Module):
         """
         super(FeatureExtractorNet, self).__init__()
         # define the network which outputs the action_mean
-        if version == "base1":
+        if version == "base1" or version == "base2":
             # vanilla version with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
             # and both layers shared between actor and critic. Actor and critic then only
             # have one separate layer each, that s, for the output (actions for actor, value for critic)
@@ -52,7 +52,6 @@ class FeatureExtractorNet(nn.Module):
                 nn.Linear(64, mid_features_size, bias=True),
                 nn.Tanh()
             )
-
 
     def forward(self, observations):
         """
@@ -95,7 +94,22 @@ class ActorNet(nn.Module):
           nn.Linear(mid_features_size, actions_num, bias=True),
           #nn.Tanh(),
           )
-      # add log stdev as a parameter, initializes as 0 by default
+      if env_params.STEP_VERSION == "newNoShort":
+          self.action_mean_net = nn.Sequential(
+              nn.Linear(mid_features_size, actions_num, bias=True),
+              nn.Softmax(),
+          )
+    elif version == "base2":
+        self.action_mean_net = nn.Sequential(
+            nn.Linear(mid_features_size, actions_num, bias=True),
+            #nn.Tanh(), #tanh function as squashing function
+        )
+        if env_params.STEP_VERSION == "newNoShort":
+            self.action_mean_net = nn.Sequential(
+                nn.Linear(mid_features_size, actions_num, bias=True),
+                nn.Softmax(dim=0),
+            )
+    # add log stdev as a parameter, initializes as 0 by default
     self.log_stdev = nn.Parameter(torch.ones(actions_num)*0)
 
   def forward(self, mid_features):
@@ -125,15 +139,15 @@ class CriticNet(nn.Module):
     """
     super(CriticNet, self).__init__()
 
-    if version == "base1":
+    if version == "base1" or version == "base2":
       # base version is shared feature extractor with actor, and then only
       # one separate layer for critic for value output
       self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
                                       #nn.ReLU(),
-                                      #nn.Linear(mid_features_size, hidden_size, bias=True),
-                                      #nn.ReLU(),
-                                      nn.Linear(mid_features_size, 1, bias=True),
-                                      #nn.Linear(hidden_size, 1, bias=True),
+                                      nn.Linear(mid_features_size, hidden_size, bias=True),
+                                      nn.ReLU(),
+                                      #nn.Linear(mid_features_size, 1, bias=True),
+                                      nn.Linear(hidden_size, 1, bias=True),
                                       )
   def forward(self, mid_features):
     """
@@ -246,10 +260,13 @@ class BrainActorCritic(nn.Module):
         ### ACTOR
         # get estimated action means from actor (policy network) using these mid features
         action_means = self.actor(mid_features)
+        #print("agent: action means")
+        #print(action_means)
         # get estimated log stdev parameter (like a bias term of the last layer) appended to the actor network
         log_stdev = self.actor.log_stdev
         # convert log standard deviation to stdev
         stdev = log_stdev.exp()
+
         # Note: this is one value. But we need to get a vector of this same value (one for each action)
         # so we can then use it to create a distribution around each action mean
         stdev_vector = torch.ones_like(action_means) * stdev
@@ -265,7 +282,8 @@ class BrainActorCritic(nn.Module):
             # We want to find out: how likely are the actions we have taken during the trajectories sampling
             # (into the Buffer) now, after we have updated our policy with a backward pass?
             # Note: in the first round, we have not yet updated our policy, hence the probabilities we will get will be the same
-
+            #print("agent, eval: stdev")
+            #print(stdev)
             # get new action log probabilities for the old actions using peviously defined Normal distribution (actions_distribution)
             actions_log_probs = actions_distribution.log_prob(actions)
 
@@ -294,7 +312,7 @@ class BrainActorCritic(nn.Module):
             # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived/1804829
             # so this will be the first entropy value we will get before any backpropagation
             # (this is good to know for debugging / to ckeck if code works properly)
-            return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution
+            return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
 
         else:
             # here we sample actions from the distribution => non-deterministic, in order to add some exploration
@@ -309,7 +327,7 @@ class BrainActorCritic(nn.Module):
                 actions_joint_log_proba = actions_log_probs.sum(dim=1)
             else:
                 actions_joint_log_proba = actions_log_probs.sum()
-            return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution
+            return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution, stdev
 
     def predict(self, new_obs):
         # change new observation to torch tensor, if it is not already a torch tensor

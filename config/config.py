@@ -12,23 +12,23 @@ classes:
     env_params
 """
 
-# TODO: update config loggings! e.g. which reward function used, 6.5. was log(newPFval/oldPFval) for mimicking risk aversion
 class settings:
     """
     Defining general settings for the whole run and global variables.
     """
     # ---------------SET MANUALLY---------------
     # dataset used:
-    DATASET = "US_stocks_WDB"
+    DATASET = "US_stocks_WDB_full"
     #DATASET = "JP_stocks_WDB"$
 
     ### strategy mode to be run
     #STRATEGY_MODE = "ppo"
     STRATEGY_MODE = "ppoCustomBase"
 
-    REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
+    #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
     #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure
+    REWARD_MEASURE = "semvarPenalty"
 
     RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
     #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
@@ -44,8 +44,10 @@ class settings:
     #STARTDATE_TRADE = 20160104
     #ENDDATE_TRADE = None
     # backtesting
-    STARTDATE_BACKTESTING = 20000101
-    ENDDATE_BACKTESTING = 20081231
+    STARTDATE_BACKTESTING_BULL = 20070605
+    ENDDATE_BACKTESTING_BULL = 20070904 # there is no 2./3. sept
+    STARTDATE_BACKTESTING_BEAR = 20070904
+    ENDDATE_BACKTESTING_BEAR = 20071203
 
     ### set rollover window; since we are doing rolling window / extended window cross validation for time series
     # 63 days = 3 months of each 21 trading days (common exchanges don't trade on weekends, need to change for crypto)
@@ -55,7 +57,7 @@ class settings:
 
     # ---------------LEAVE---------------
     ### define 10 randomly picked numbers to be used for seeding
-    SEEDS_LIST = [0, 5]#, 23, 7774, 9090, 11112,  45252, 80923, 223445, 444110]
+    SEEDS_LIST = [0, 5, 23, 7774]#, 11112,  45252, 80923, 223445, 444110]
     SEED = None # placeholder, will be overwritten in run file)
 
     ### returns current timestamp, mainly used for naming directories/ printout / logging to .txt
@@ -63,7 +65,7 @@ class settings:
 
     # this is going to be in the run folder name
     if RETRAIN_DATA:
-        # if we retrain data, run modeis "long" (simply because it takes longer)
+        # if we retrain data, run models "long" (simply because it takes longer)
         RUN_MODE = "lng" # for "long"
     else:
         # if we do not retrain data, run mode is short (the run takes less long)
@@ -102,12 +104,12 @@ class data_settings:
 
     ### PROVIDE NAMES OF ALL FEATURES / INDICATORS GIVEN DATASET COLUMN NAMES
     PRICE_FEATURES = [MAIN_PRICE_COLUMN]
-    RETURNS_FEATURES = ["log_return_daily"]
-    TECH_INDICATORS = ["macd", "rsi_30", "cci_30", "dx_30", "volume"]
-    RISK_INDICATORS = ["ret_vola_7d"] #["returns_volatility"]
+    RETURNS_FEATURES = ["log_return_daily"] # log returns because they are a bit less "extreme" when they are larger and since we have daily returns this could be practical
+    TECH_INDICATORS = ["macd", "rsi_21", "cci_21", "dx_21", "obv"] # technical indicators for momentum, obv instead of raw "volume"
+    RISK_INDICATORS = ["ret_vola_21d", "vixDiv100"] # 21 days volatility and daily vix (divide by 100)
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm2"
+    FEATURES_MODE = "fm3"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -115,18 +117,28 @@ class data_settings:
     elif FEATURES_MODE == "fm2":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS
     elif FEATURES_MODE == "fm3":
-        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + RISK_INDICATORS + TECH_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
     elif FEATURES_MODE == "fm4":
         pass
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
+    #STEP_VERSION = "paper" # deprecated, only use if you want to use the method from the ensemble paper
+    STEP_VERSION = "newNoShort"
+
     # ---------------LEAVE---------------
-    HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
+    if STEP_VERSION == "newNoShort":
+        HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
+        REWARD_SCALING = None  # This is 0.0001.
+        REBALANCE_PENALTY = 0.2
+    elif STEP_VERSION == "paper":
+        HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
+        REWARD_SCALING = 1e-4  # This is 0.0001.
+        REBALANCE_PENALTY = None
+
     INITIAL_CASH_BALANCE = 1000000
-    TRANSACTION_FEE_PERCENT = 0.001  # todo: check reasonability: https://www.google.com/search?client=firefox-b-d&q=transaction+fee+for+stock+trading
-    REWARD_SCALING = 1e-4  # This is 0.0001.
+    TRANSACTION_FEE_PERCENT = 0.001  # reasonability: https://www.google.com/search?client=firefox-b-d&q=transaction+fee+for+stock+trading
 
 class agent_params:
     # ---------------SET MANUALLY---------------
@@ -243,11 +255,10 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        NET_VERSION = "base1"
-        #NET_VERSION = "base2"
+        #NET_VERSION = "base1"
+        NET_VERSION = "base2"
         #NET_VERSION = "LSTM1"
         #NET_VERSION = "LSTM2"
-
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
@@ -257,21 +268,23 @@ class agent_params:
         GAMMA = 0.99
         GAE_LAMBDA = 0.95
         CLIP_EPSILON = 0.1#0.5#0.2
-        MAX_KL_VALUE = None
         CRITIC_LOSS_COEF = 0.5
-        ENTROPY_LOSS_COEF = 0.01
+        ENTROPY_LOSS_COEF = 0.1 #0.01
         MAX_GRADIENT_NORMALIZATION = 0.5
+        MAX_KL_VALUE = None
 
         ### LEARNING PARAMETERS
-        TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set at length of train / vaidation / test data = > length of one episode
-        TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
+        TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
+        #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
+        TOTAL_EPISODES_TO_TRAIN = 30 #10
+
 
 class paths:
     # ---------------LEAVE---------------
     # data paths
     DATA_PATH = "data"
     RAW_DATA_PATH = os.path.join(DATA_PATH, "raw")
-    PREPROCESSED_DATA_PATH = os.path.join(DATA_PATH, "preprocessed")  # todo: was PREPROCESSED_RAW_DATA_PATH
+    PREPROCESSED_DATA_PATH = os.path.join(DATA_PATH, "preprocessed")
 
     # trained models and results path
     TRAINED_MODELS_PATH = "trained_models"
@@ -291,12 +304,30 @@ class paths:
                        "buy_trades": "buy_trades",
                        "state_memory": "state_memory",
                        "last_state": "last_state",
-                       "backtest": "backtest",
+                       "backtest_bull": "backtest_bull",
+                       "backtest_bear": "backtest_bear",
                        "training_performance": "training_performance",
                        }
-    # data files # todo: rm
-    #RAW_DATA_FILE = os.path.join(RAW_DATA_PATH, "dow_30_2009_2020.csv")
 
     # ---------------LEAVE---------------
     PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{data_settings.COUNTRY}_stocks_"
                                                                   f"{data_settings.DATABASE}.csv")
+
+class hptuning_config:
+    #now_hptuning = True
+    now_hptuning = False
+
+    only_hptuning = False
+    #only_hptuning = True # if you only want to tune hyperparameters for the current setting and not run the whole train / test setup as well
+
+    # https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
+    GAMMA_LIST = [0.8, 0.99]
+    GAE_LAMBDA_LIST = [0.95, 0.99]
+    CLIP_EPSILON_LIST = [0.1, 0.2, 0.3]  # 0.5#0.2
+    CRITIC_LOSS_COEF_LIST = [0.5, 1]
+    ENTROPY_LOSS_COEF_LIST = [0.001, 0.3]
+
+    # NOTE: I have created a grid in excel "manually" using these variables and the excel
+    # was saved as .csv file in the data folder.
+    # So if you want to try out other hyperparameters, you need to change the excel /csv file.
+

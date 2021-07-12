@@ -31,7 +31,7 @@ if __name__ == "__main__":
     data = load_dataset(file_path=paths.PREPROCESSED_DATA_FILE,
                         col_subset=data_settings.FEATURES_LIST,
                         date_subset="datadate",
-                        date_subset_startdate=settings.STARTDATE_BACKTESTING)
+                        date_subset_startdate=settings.STARTDATE_BACKTESTING_BULL)
     # sort values first based on date, then on ticker (stock short-name), then factorize index based on datadate
     # (set the data index to be 0 for the first date (e.g. 20090102), 1 for the ext date etc.)
     # the goal is that we get a data set like this (for easier accessing in the environment)
@@ -86,21 +86,7 @@ if __name__ == "__main__":
     for seed in settings.SEEDS_LIST:
         run_count += 1
         settings.SEED = seed
-        # set some seeds
-        #torch.manual_seed(seed)
-        #np.random.seed(seed)
-        #random.seed(seed)
-        #torch.cuda.manual_seed(seed)
-        #torch.backends.cudnn.deterministic = True
 
-        #logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
-        #                    filemode='a',
-        #                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-        #                    # asctime = time, msecs, name = name of who runned it (?), levelname (e.g. DEBUG, INFO => verbosity), message
-        #                    datefmt='%H:%M:%S',
-        #                    # level=logging.INFO
-        #                    # level=logging.DEBUG
-        #                    level=logging.NOTSET)
         logger = custom_logger(seed=seed,
                                logging_path=logsave_path,
                                level=logging.DEBUG)
@@ -124,19 +110,21 @@ if __name__ == "__main__":
                                    assets_dim=assets_dim,
                                    #n_features=n_features,
                                    shape_observation_space=shape_observation_space,
-                                   logger=logger
+                                   logger=logger,
+
                                    )
 
-    #############################################################
-    #         PERFORMANCE CALCULATION ACROSS ALL SEEDS          #
-    #############################################################
-    common_logger.info("Summarizing whole run performance across all seeds.")
-    perf_start = time.time()
-    calculate_performance_measures(run_path=results_dir,
-                                   level="run",
-                                   seed=settings.SEED,
-                                   mode="test",
-                                   logger=common_logger)
-    common_logger.info("Summarizing whole run performance across all seeds finished.")
-    perf_end = time.time()
-    common_logger.info(f"Performance summary over all seeds took: " + str((perf_start - perf_end) / 60) + " minutes")
+    if not hptuning_config.only_hptuning:
+        #############################################################
+        #         PERFORMANCE CALCULATION ACROSS ALL SEEDS          #
+        #############################################################
+        common_logger.info("Summarizing whole run performance across all seeds.")
+        perf_start = time.time()
+        calculate_performance_measures(run_path=results_dir,
+                                       level="run",
+                                       seed=settings.SEED,
+                                       mode="test",
+                                       logger=common_logger)
+        common_logger.info("Summarizing whole run performance across all seeds finished.")
+        perf_end = time.time()
+        common_logger.info(f"Performance summary over all seeds took: " + str((perf_start - perf_end) / 60) + " minutes")
