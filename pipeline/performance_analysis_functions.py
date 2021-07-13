@@ -1,23 +1,9 @@
-import time
-# RL models from stable-baselines
 from typing import Tuple
-
-from stable_baselines3 import PPO
-from stable_baselines3.ppo.policies import MlpPolicy
-import gym
-import math
 import glob
-import ffn
 import pandas as pd
 import numpy as np
-
 # own libraries
 from config.config import *
-from environment.FinancialMarketEnv import FinancialMarketEnv
-from model.CustomOnPolicyBuffer import OnPolicyBuffer
-from model.CustomPPOAlgorithm import PPO_algorithm
-from model.CustomActorCriticNets import BrainActorCritic, \
-    init_weights_feature_extractor_net, init_weights_actor_net, init_weights_critic_net
 
 ########################################################################
 # DEFINE FUNCTIONS PERFORMANCE EVALUATION                              #
@@ -26,6 +12,7 @@ from model.CustomActorCriticNets import BrainActorCritic, \
 def calculate_performance_measures(run_path: str, # path where the target results are saved for the whole run
                                    # whether the results are calculated for one seed or across all seeds (whole run)
                                    seed: int,
+                                   seeds_list: list, # only needed for level="run"
                                    level="seed", #"run"
                                    mode: str = "test",
                                    logger=None,
@@ -57,7 +44,7 @@ def calculate_performance_measures(run_path: str, # path where the target result
     if level == "run":
         li = []
         # for every seed in the list of seeds
-        for seed in settings.SEEDS_LIST:
+        for seed in seeds_list:
             seed_path = os.path.join(run_path, "randomSeed"+str(seed))
             #seed_path = os.path.join(run_path, "agentSeed" + str(seed)) # todo: deprec.
             # get the performance metrics summary df for the current seed
@@ -299,10 +286,10 @@ def calculate_and_save_performance_metrics(results_dict: dict,
     ### SAVE
     df = pd.DataFrame({"performance_metric":
                            ["sharpe_ratio_daily_ann", "total_return", "avg_daily_return_ann",
-                            "std_daily_return_ann", "maxdd", "avg_dd", "avg_dd_days", np.Nan,
+                            "std_daily_return_ann", "maxdd", "avg_dd", "avg_dd_days", np.NaN,
                             # backtest bull
                             "btbull_sharpe_ratio_daily_ann", "btbull_total_return", "btbull_avg_daily_return_ann",
-                            "btbull_std_daily_return_ann", "btbull_maxdd", "btbull_avg_dd", "btbull_avg_dd_days", np.Nan,
+                            "btbull_std_daily_return_ann", "btbull_maxdd", "btbull_avg_dd", "btbull_avg_dd_days", np.NaN,
                             # backtest bear
                             "btbear_sharpe_ratio_daily_ann", "btbear_total_return", "btbear_avg_daily_return_ann",
                             "btbear_std_daily_return_ann", "btbear_maxdd", "btbear_avg_dd", "btbear_avg_dd_days"
@@ -310,11 +297,11 @@ def calculate_and_save_performance_metrics(results_dict: dict,
                        f"seed{seed}":
                            [sharpe_ratio_daily_ann, total_return, avg_daily_return_ann,
                             std_daily_return_ann, maxdd, avg_dd, avg_dd_days,
-                            np.Nan, # NP NAN IN ORDER TO MAKE IT A BIT MORE READABLE
+                            np.NaN, # NP NAN IN ORDER TO MAKE IT A BIT MORE READABLE
                             # backtest bull
                             btbull_sharpe_ratio_daily_ann, btbull_total_return, btbull_avg_daily_return_ann,
                             btbull_std_daily_return_ann, btbull_maxdd, btbull_avg_dd, btbull_avg_dd_days,
-                            np.Nan,
+                            np.NaN,
                             # backtest bear
                             btbear_sharpe_ratio_daily_ann, btbear_total_return, btbear_avg_daily_return_ann,
                             btbear_std_daily_return_ann, btbear_maxdd, btbear_avg_dd, btbear_avg_dd_days,

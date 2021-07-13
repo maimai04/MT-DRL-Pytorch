@@ -5,11 +5,8 @@ import os
 import numpy as np
 import random
 import torch
-from stable_baselines3.common.vec_env import DummyVecEnv
 
 # import own libraries
-from config.config import settings, data_settings, env_params, hptuning_config, agent_params
-from environment.FinancialMarketEnv import FinancialMarketEnv
 from pipeline.performance_analysis_functions import calculate_performance_measures
 from pipeline.support_functions import get_model, get_environment, hyperparameter_tuning
 
@@ -18,7 +15,7 @@ from pipeline.support_functions import get_model, get_environment, hyperparamete
 ##    FUNCTION TO RUN WHOLE SETUP    ##
 #######################################
 
-def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling window
+def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                # where the results for the current run(with the current seed) are going to be saved
                                results_dir: str,
                                trained_dir: str,
@@ -28,20 +25,68 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                # (=n_stocks*n_features_per_stock+n_separate_features+n_stocks(for stock holdings/weights)+1(for cash position)
                                shape_observation_space: int,
                                # which ppo version is run: ppo (stable baselines3), ppoCustomBase, ppoCustomLSTM
-                               logger: logging) -> None:
+                               logger: logging,
+                               global_startdate_train: int,
+                               global_enddate_train: int,
+                               validation_window: int,
+                               testing_window: int,
+                               roll_window: int,
+                               global_enddate_backtesting_bull: int,
+                               global_enddate_backtesting_bear: int,
+                               seed: int,
+                               retrain_data: bool,
+
+                               net_version: str,
+                               optimizer,
+                               optimizer_learning_rate,
+                               max_gradient_norm,
+                               total_timesteps_to_collect,
+                               num_epochs,
+                               batch_size,
+
+                               gamma: float,
+                               gae_lam: float,
+                               clip: float,
+                               critic_loss_coef: float,
+                               entropy_loss_coef: float,
+                               total_episodes_to_train: int,
+
+                               env_step_version: str,
+                               rebalance_penalty: float,
+                               hmax_normalize: int,
+                               initial_cash_balance: int,
+                               transaction_fee: float,
+                               reward_scaling: float,
+                               reward_measure: str,
+
+                               strategy_mode: str = "ppoCustomBase",
+                               date_column: str="datadate",
+
+                               now_hptuning: bool = False,
+                               only_hptuning: bool = False,
+                               #use_tuned_params: bool = False,  # todo: rm
+
+                               features_list: list = [],
+                               single_features_list: list = [],
+
+                               price_column_name: str="adjcp",
+                               save_results: bool=True,
+                               calculate_sharpe_ratio: bool=False,
+                               ) -> None:
+
     """
     This function implements an expanding window cross validation for time series.
     It works as follows:
 
     [train             ][test]
-    [train                   ][test]
-    [train                         ][test]
-    [train                               ][test]
-    ... the train window is expanded by settings.ROLL_WINDOW (set at 63 days = 3 trading months, sinde one month has ~21 trading days)
+         [train              ][test]
+              [train               ][test]
+                    [train              ][test]
+    ... the train window is expanded by roll_window (set at 63 days = 3 trading months, sinde one month has ~21 trading days)
 
     At the end of each training period, the trained model is saved. The model is then not (re-)trained on the whole train set + the additional train data,
     but rather what we use here is transfer learning => the model (which was trained on train data up to t) is loaded and ther trained only
-    on the additional train set (from t to t+settings-ROLL_WINDOW).
+    on the additional train set (from t to t+roll_window).
     The number of total train steps and the batch size are adjusted accordingly (since the additional training window in this setup
     is always 63 days, it does not make sense to train on this set as many times as on the first much bigger train set.
 
@@ -84,11 +129,10 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     @param trained_dir:
     @param assets_dim:
     @param shape_observation_space:
-    @param run_mode:
     @param retrain_train_data:
     @return:
     """
-    logger.info("=======Starting {} Agent (run_model)=======".format(settings.STRATEGY_MODE))
+    logger.info("=======Starting {} Agent (run_model)=======".format(strategy_mode))
 
     #############################################################
     #                          SETUP                            #
@@ -127,11 +171,11 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     # so if we only take the date columns, we will have duplicates (actually each date number_assets times),
     # so we want to get the end time index of the data set like this:
     # get unique datadates
-    datadates = df[data_settings.DATE_COLUMN].unique()
+    datadates = df[date_column].unique()
     # get the enddate
     enddate = datadates[-1]
     # get the index of the enddate
-    enddate_index = df[df[data_settings.DATE_COLUMN] == enddate].index.to_list()[0]
+    enddate_index = df[df[date_column] == enddate].index.to_list()[0]
 
     # GET TRAIN BEGINNING INDEX for the first episode
     i = 0
@@ -142,7 +186,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             # it is not a trading day and it will run the exception, where we are then going to try to get the index of the next date, until
             # we have found a training start that works (this only works if we are not too far off, since the STARTDATE_TRAIN is an integer,
             # and if we add 20090101 + 60 we get 20090101,=> not a date that actually exists
-            train_beginning = df[df[data_settings.DATE_COLUMN] == settings.STARTDATE_TRAIN+i].index.to_list()[0]
+            train_beginning = df[df[date_column] == global_startdate_train + i].index.to_list()[0]
             break
         except:
             i += 1
@@ -154,7 +198,8 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     i = 0
     while True:
         try:
-            train_ending = df[df[data_settings.DATE_COLUMN] == settings.ENDDATE_TRAIN+i].index.to_list()[0]
+            # note: global_enddate_train is just the enddate of the first train set before rolling forward the window
+            train_ending = df[df[date_column] == global_enddate_train + i].index.to_list()[0]
             break
         except:
             i += 1
@@ -165,18 +210,18 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     # NOTE: the validation is done within the training agent in order to enable early stopping or in general, analysis
     # after every epoch, the agent is evaluated on the validation set based on the mean rewards
     validation_beginning = train_ending
-    validation_ending = validation_beginning + settings.VALIDATION_WINDOW # 63 days like rolling window
+    validation_ending = validation_beginning + validation_window # 63 days like rolling window
 
     # GET TEST BEGINNING AND ENDING for the first episode
     testing_beginning = validation_ending
-    testing_ending = testing_beginning + settings.TESTING_WINDOW  # testing window 63 days like rolling window
+    testing_ending = testing_beginning + testing_window  # testing window 63 days like rolling window
 
     # GET BACKTESTING BULL MARKET BEGINNING AND ENDING
     backtesting_bull_beginning = df.loc[0].index[0] # first date of dataframe, since we loaded the df with backtesting bull market data beginning as startdate
     i = 0
     while True:
         try:
-            backtesting_bull_ending = df[df[data_settings.DATE_COLUMN] == settings.ENDDATE_BACKTESTING_BULL + i].index.to_list()[0]
+            backtesting_bull_ending = df[df[date_column] == global_enddate_backtesting_bull + i].index.to_list()[0]
             break
         except:
             i += 1
@@ -189,7 +234,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     i = 0
     while True:
         try:
-            backtesting_bear_ending = df[df[data_settings.DATE_COLUMN] == settings.ENDDATE_BACKTESTING_BEAR + i].index.to_list()[0]
+            backtesting_bear_ending = df[df[date_column] == global_enddate_backtesting_bear + i].index.to_list()[0]
             break
         except:
             i += 1
@@ -201,13 +246,13 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     #############################################################
     #                   HYPERPARAMETER TUNING                   #
     #############################################################
-    if hptuning_config.now_hptuning:
+    if now_hptuning: # todo: rm
         logger.info(f"--Start HP-Tuning on train subset.")
         # set some seeds
-        torch.manual_seed(settings.SEED)
-        np.random.seed(settings.SEED)
-        random.seed(settings.SEED)
-        torch.cuda.manual_seed(settings.SEED)
+        torch.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
 
         hp_train_data = df[(df.index >= train_beginning) & (df.index <= train_ending)]
@@ -223,13 +268,13 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                                           save_results=True)
 
     else:
-        if settings.STRATEGY_MODE == "ppoCustomBase":
-            logger.info(f"--No HP-Tuning. Using set / tuned parameters for {settings.STRATEGY_MODE}.")
-            gamma = agent_params.ppoCustomBase.GAMMA
-            gae_lam = agent_params.ppoCustomBase.GAE_LAMBDA
-            clip = agent_params.ppoCustomBase.CLIP_EPSILON
-            critic_loss_coef = agent_params.ppoCustomBase.CRITIC_LOSS_COEF
-            entropy_loss_coef = agent_params.ppoCustomBase.ENTROPY_LOSS_COEF
+        if strategy_mode == "ppoCustomBase":
+            logger.info(f"--No HP-Tuning. Using set / tuned parameters for {strategy_mode}.")
+            gamma = gamma
+            gae_lam = gae_lam
+            clip = clip
+            critic_loss_coef = critic_loss_coef
+            entropy_loss_coef = entropy_loss_coef
 
 
     #############################################################
@@ -242,10 +287,10 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
     # as long as the start of the testing period does not go beyond the end of our data set,
     # we do an expanding window train/test (cross validation basically)
     # (unless some other breaking conditions fulfilled, below)
-    if not hptuning_config.only_hptuning:
+    if not only_hptuning: # todo: rm
 
         while testing_beginning <= enddate_index:
-            if hptuning_config.only_hptuning:
+            if only_hptuning:
                 break
             logger.info("==================================================")
             #logger.info("iteration (time step)  : "+str(i - settings.REBALANCE_WINDOW - settings.VALIDATION_WINDOW + 1))
@@ -264,20 +309,21 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                 # if we don't want to retrain the model on the whole training data + new training data
                 # but if we only want to use the previously trained model on the new training data
                 # this only applies if we already have trained the model for one episode (so doesn't apply in the first episode)
-                if settings.RETRAIN_DATA:
+                if retrain_data:
                     initial_train = False
 
             logger.info("--------INITIALS")
             logger.info(f"CURRENT EPISODE {current_episode_number}")
-            logger.info(f"RUN_MODE {settings.RUN_MODE}")
             logger.info(f"train_beginning {train_beginning}")
             logger.info(f"train_ending {train_ending}")
             logger.info(f"validation_beginning {validation_beginning}")
             logger.info(f"validation_ending {validation_ending}")
             logger.info(f"testing_beginning {testing_beginning}")
             logger.info(f"testing_ending {testing_ending}")
-            logger.info(f"backtesting_beginning {backtesting_beginning}")
-            logger.info(f"backtesting_ending {backtesting_ending}")
+            logger.info(f"backtesting_beginning {backtesting_bull_beginning}")
+            logger.info(f"backtesting_ending {backtesting_bull_ending}")
+            logger.info(f"backtesting_beginning {backtesting_bear_beginning}")
+            logger.info(f"backtesting_ending {backtesting_bear_ending}")
             logger.info(f"global enddate of dataset: {enddate}, index of global enddate: {enddate_index}")
             logger.info(f"load_trained_model {load_trained_model}")
             logger.info(f"initial episode: {initial}")
@@ -285,10 +331,10 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             logger.info("--------")
 
             # set some seeds
-            torch.manual_seed(settings.SEED)
-            np.random.seed(settings.SEED)
-            random.seed(settings.SEED)
-            torch.cuda.manual_seed(settings.SEED)
+            torch.manual_seed(seed)
+            np.random.seed(seed)
+            random.seed(seed)
+            torch.cuda.manual_seed(seed)
             torch.backends.cudnn.deterministic = True
 
             ############## Data Setup starts ##############
@@ -335,12 +381,25 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                         results_dir=results_dir,
                                         reset_counter=0,
                                         logger=logger,
+                                        strategy_mode=strategy_mode,
+                                        features_list=features_list,
+                                        single_features_list=single_features_list,
+                                        env_step_version=env_step_version,
+                                        rebalance_penalty=rebalance_penalty,
+                                        hmax_normalize=hmax_normalize,
+                                        initial_cash_balance=initial_cash_balance,
+                                        transaction_fee=transaction_fee,
+                                        reward_scaling=reward_scaling,
+                                        price_column_name=price_column_name,
+                                        reward_measure=reward_measure,
                                         save_results=True,
-                                        calculate_sharpe_ratio=False
+                                        calculate_sharpe_ratio=False,
                                         )
-            env_train.seed(settings.SEED)
-            env_train.action_space.seed(settings.SEED)
-            obs_train = env_train.reset() # prints a logging message, obs_train for debugging ot check if correct (now nothing printed out)
+
+
+            env_train.seed(seed)
+            env_train.action_space.seed(seed)
+            env_train.reset() # prints a logging message, obs_train for debugging ot check if correct (now nothing printed out)
             # https://harald.co/2019/07/30/reproducibility-issues-using-openai-gym/
             logger.info(f"--Create instance train env finished.")
 
@@ -353,20 +412,30 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                       assets_dim=assets_dim,
                                       shape_observation_space=shape_observation_space,
                                       initial=True, # for validation, we always have an "initial state"
-                                      previous_state=[],
+                                      previous_state=[], # and we never pass the previous state
                                       previous_asset_price=None,
                                       results_dir=results_dir,
                                       reset_counter=0,
                                       logger=logger,
+                                      strategy_mode=strategy_mode,
+                                      features_list=features_list,
+                                      single_features_list=single_features_list,
+                                      env_step_version=env_step_version,
+                                      rebalance_penalty=rebalance_penalty,
+                                      hmax_normalize=hmax_normalize,
+                                      initial_cash_balance=initial_cash_balance,
+                                      transaction_fee=transaction_fee,
+                                      reward_scaling=reward_scaling,
+                                      price_column_name=price_column_name,
+                                      reward_measure=reward_measure,
                                       save_results=True,
-                                      calculate_sharpe_ratio=False
+                                      calculate_sharpe_ratio=False,
                                       )
-
-            env_val.seed(settings.SEED)
-            env_val.action_space.seed(settings.SEED)
+            env_val.seed(seed)
+            env_val.action_space.seed(seed)
 
             # reset validation environment to obtain observations from the validation environment
-            obs_val = env_val.reset() # prints a logging message, obs_val for debugging ot check if correct (now nothing printed out)
+            env_val.reset() # prints a logging message, obs_val for debugging ot check if correct (now nothing printed out)
             logger.info(f"--Create instance validation env finisher.")
 
             # make testing environment
@@ -384,15 +453,29 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                         reset_counter=0,
                                         logger=logger,
                                         save_results=True,
-                                        calculate_sharpe_ratio=False
-                                        )
+                                        calculate_sharpe_ratio=False,
+                                        strategy_mode=strategy_mode,
+                                        features_list=features_list,
+                                        single_features_list=single_features_list,
+                                        env_step_version=env_step_version,
+                                        rebalance_penalty=rebalance_penalty,
+                                        hmax_normalize=hmax_normalize,
+                                        initial_cash_balance=initial_cash_balance,
+                                        transaction_fee=transaction_fee,
+                                        reward_scaling=reward_scaling,
+                                        price_column_name=price_column_name,
+                                        reward_measure=reward_measure,
+                                       )
+
+
             # get last asset prices from the test dataset; these are going to be used as initial state in the next episode
             # for the test set
-            last_asset_price_test = test_data[data_settings.MAIN_PRICE_COLUMN][test_data.index == test_data.index[-1]].values.tolist()
+            last_asset_price_test = test_data[price_column_name][test_data.index == test_data.index[-1]].values.tolist()
 
-            env_test.seed(settings.SEED)
-            env_test.action_space.seed(settings.SEED)
-            # reset environment to obtain first observations (state representation vector)
+            env_test.seed(seed)
+            env_test.action_space.seed(seed)
+            # reset environment to obtain first observations (state representation vector), which will be used as initial state for testing
+            # later
             obs_test = env_test.reset()
             logger.info(f"--Create instance test env finished.")
             ############## Environment Setup ends ##############
@@ -405,7 +488,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                   number_train_data_points=len(train_data.index.unique()),
                                   shape_observation_space=shape_observation_space,
                                   assets_dim=assets_dim,
-                                  strategy_mode=settings.STRATEGY_MODE,
+                                  strategy_mode=strategy_mode,
                                   performance_save_path=os.path.join(results_dir, "training_performance"),
                                   train_env_firstday=train_data.index[0],
                                   val_env_firstday=validation_data.index[0],
@@ -419,37 +502,51 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                   gae_lambda=gae_lam,
                                   clip_epsilon=clip,
                                   critic_loss_coef=critic_loss_coef,
-                                  entropy_loss_coef=entropy_loss_coef
+                                  entropy_loss_coef=entropy_loss_coef,
+                                  env_step_version=env_step_version,
+                                  net_version=net_version,
+                                  optimizer=optimizer,
+                                  optimizer_learning_rate=optimizer_learning_rate,
+                                  max_gradient_norm=max_gradient_norm,
+                                  total_timesteps_to_collect=len(train_data.index.unique()),
+                                  num_epochs=num_epochs,
+                                  batch_size=batch_size,
                                   )
 
-            training_timesteps = len(train_data.index.unique()) * agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN
-            logger.info(f"RETRAIN_DATA = {settings.RETRAIN_DATA} and current_episode_number {current_episode_number}:")
-            logger.info(f"\ntotal episodes to train on: {agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN}")
+            if retrain_data == True and current_episode_number > 1:
+                minus = 15
+                training_timesteps = len(train_data.index.unique()) * (total_episodes_to_train - minus)
+            else:
+                minus = 0
+                training_timesteps = len(train_data.index.unique()) * total_episodes_to_train
+
+            logger.info(f"RETRAIN_DATA = {retrain_data} and current_episode_number {current_episode_number}:")
+            logger.info(f"\ntotal episodes to train on: {total_episodes_to_train-minus}")
             logger.info(f"\ntotal timesteps to train on: {training_timesteps}")
             logger.info(f"\ntotal data length (train): {len(train_data.index.unique())}")
 
             logger.info(f"--Create instance for ppo model finished.")
             ############## Training starts ##############
             logger.info(f"##### TRAINING")
-            logger.info(f"---{settings.STRATEGY_MODE.upper()} training from: "
+            logger.info(f"---{strategy_mode.upper()} training from: "
                          f"{train_beginning} to {train_ending}, "f"(i={current_episode_number}).")
 
             train_start = time.time()
             ppo_model.learn(total_timesteps=training_timesteps)
             train_end = time.time()
-            logger.info(f"Training time ({settings.STRATEGY_MODE.upper()}): " + str((train_end - train_start) / 60) + " minutes.")
+            logger.info(f"Training time ({strategy_mode.upper()}): " + str((train_end - train_start) / 60) + " minutes.")
 
             # save trained model
             # (if custom PPO, only the neural network is going to be saved, not any other metadata / parameters
             # from the agent; but since my custom version doesn't have any variable parameters, this doesn't matter
-            model_save_name = f"{settings.STRATEGY_MODE}_trainTimesteps_{training_timesteps}_" + \
+            model_save_name = f"{strategy_mode}_trainTimesteps_{training_timesteps}_" + \
                               f"ep{current_episode_number}_trainBeginning_{train_beginning}_trainEnding_{train_ending}"
             trained_model_save_path = f"{trained_dir}/{model_save_name}"
 
             # save trained model
-            if settings.STRATEGY_MODE == "ppo":
+            if strategy_mode == "ppo":
                 ppo_model.save(trained_model_save_path)
-            elif settings.STRATEGY_MODE == "ppoCustomBase":
+            elif strategy_mode == "ppoCustomBase":
                 torch.save(ppo_model.Brain.state_dict(), trained_model_save_path)
 
             # get the terminal state / observation from the environment.
@@ -461,14 +558,15 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
 
             # save the last state as a dataframe
             df_last_state = pd.DataFrame({"last_state": last_train_state_flattened})
-            df_last_state.to_csv(f"{results_dir}/last_state/last_state_train_{settings.STRATEGY_MODE}"
+            df_last_state.to_csv(f"{results_dir}/last_state/last_state_train_{strategy_mode}"
                                  f"_ep{current_episode_number}.csv", index=False)
             # trained model is saved in DRL_trading, then used in validation  /testing
             ############## Training ends ##############
 
+
             ############## Testing starts ##############
             logger.info(f"##### TESTING")
-            logger.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
+            logger.info(f"---{strategy_mode.upper()} Testing from: "
                             f"{testing_beginning} to {testing_ending}, (ep={current_episode_number}).======")
 
             test_start = time.time()
@@ -476,7 +574,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             for j in range(len(test_data.index.unique())):
                 # use the trained model to predict actions using the test_obs we received far above when we setup the test env
                 # and run obs_test = env.reset()
-                action, _ = ppo_model.predict(obs_test)
+                action, _ = ppo_model.predict(new_obs=obs_test, env_step_version=env_step_version, n_assets=assets_dim)
                 # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
                 # and info (here empty, hence _, since we don't need it)
                 obs_test, rewards, dones, _ = env_test.step(action)
@@ -492,7 +590,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                     # save the last testing state as df
                     df_last_state = pd.DataFrame({'last_state': last_test_state_flattened})
                     df_last_state.to_csv(f'{results_dir}/last_state/last_state_test_'
-                                         f'{settings.STRATEGY_MODE}_ep{current_episode_number}.csv', index=False)
+                                         f'{strategy_mode}_ep{current_episode_number}.csv', index=False)
             test_end = time.time()
             logger.info(f"Testing time: " + str((test_end - test_start) / 60) + " minutes")
 
@@ -501,31 +599,31 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             # if we have reached our last episode, we break / stop the while loop
             if last_episode:
                 break
-            if settings.RETRAIN_DATA == True:
+            if retrain_data == True:
                 pass
                 # load_trained_model will stay False, since we will retrain the model in every episode
                 # on the whole train data from scratch
                 # train_beginning is rolled forward by ROLL_WINDOW stays the same as given in config.py
                 # hence training period gets longer and longer (expanding window)
                 # and additionally, we retrain on the whole training data (don't use any transfer learning)
-                train_beginning = train_beginning + settings.ROLL_WINDOW
-            elif settings.RETRAIN_DATA == False:
+                train_beginning = train_beginning + roll_window
+            elif retrain_data == False:
                 # if we don't want to retrain, then we will use transfer learning, we will use the previously saved model
                 load_trained_model = True
                 # we will later load the previously trained model and continue training only on the new training data only
                 # hence the new train beginning is the previous train ending
                 #train_beginning = train_ending
-                train_beginning = train_beginning + settings.ROLL_WINDOW
+                train_beginning = train_beginning + roll_window
 
             # Update dates for next episode
             # the train set is expanded by ROLL_WINDOW (63 trading days)
-            train_ending = train_ending + settings.ROLL_WINDOW
+            train_ending = train_ending + roll_window
             validation_beginning = train_ending
-            validation_ending = validation_beginning + settings.ROLL_WINDOW
+            validation_ending = validation_beginning + roll_window
             #trading_beginning = validation_ending
-            #trading_ending = trading_beginning + settings.ROLL_WINDOW
+            #trading_ending = trading_beginning + roll_window
             testing_beginning = validation_ending
-            testing_ending = testing_beginning + settings.ROLL_WINDOW
+            testing_ending = testing_beginning + roll_window
 
             # increase current episode number
             current_episode_number += 1
@@ -549,7 +647,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             logger.info(f"test data: {testing_beginning}:{testing_ending}\n")
 
         episodes_end = time.time()
-        logger.info(f"{settings.STRATEGY_MODE} "
+        logger.info(f"{strategy_mode} "
                      f"strategy for one seed took: {str((episodes_end - episodes_start) / 60)}, minutes.\n")
 
         #############################################################
@@ -593,11 +691,23 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                                reset_counter=0,
                                                logger=logger,
                                                save_results=True,
-                                               calculate_sharpe_ratio=False
+                                               calculate_sharpe_ratio=False,
+                                               strategy_mode=strategy_mode,
+                                               features_list=features_list,
+                                               single_features_list=single_features_list,
+                                               env_step_version=env_step_version,
+                                               rebalance_penalty=rebalance_penalty,
+                                               hmax_normalize=hmax_normalize,
+                                               initial_cash_balance=initial_cash_balance,
+                                               transaction_fee=transaction_fee,
+                                               reward_scaling=reward_scaling,
+                                               price_column_name=price_column_name,
+                                               reward_measure=reward_measure,
                                                )
 
-        env_backtesting_bull.seed(settings.SEED)
-        env_backtesting_bull.action_space.seed(settings.SEED)
+
+        env_backtesting_bull.seed(seed)
+        env_backtesting_bull.action_space.seed(seed)
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bull = env_backtesting_bull.reset()
         logger.info("created instance env_backtesting_bull and reset env.")
@@ -605,7 +715,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
 
         ############## Backtesting starts ##############
         logger.info(f"##### STARTING BACKTESTING ON BULL MARKET")
-        logger.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
+        logger.info(f"---{strategy_mode.upper()} Testing from: "
                      f"{backtesting_bull_beginning} to {backtesting_bull_ending}, (ep={current_episode_number}).======")
 
         backtest_bull_start = time.time()
@@ -614,7 +724,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _ = ppo_model.predict(obs_backtest_bull)
+            action, _ = ppo_model.predict(new_obs=obs_backtest_bull, env_step_version=env_step_version, n_assets=assets_dim)
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bull, rewards, dones, _ = env_backtesting_bull.step(action)
@@ -664,11 +774,22 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
                                                reset_counter=0,
                                                logger=logger,
                                                save_results=True,
-                                               calculate_sharpe_ratio=False
+                                               calculate_sharpe_ratio=False,
+                                               strategy_mode=strategy_mode,
+                                               features_list=features_list,
+                                               single_features_list=single_features_list,
+                                               env_step_version=env_step_version,
+                                               rebalance_penalty=rebalance_penalty,
+                                               hmax_normalize=hmax_normalize,
+                                               initial_cash_balance=initial_cash_balance,
+                                               transaction_fee=transaction_fee,
+                                               reward_scaling=reward_scaling,
+                                               price_column_name=price_column_name,
+                                               reward_measure=reward_measure,
                                                )
 
-        env_backtesting_bear.seed(settings.SEED)
-        env_backtesting_bear.action_space.seed(settings.SEED)
+        env_backtesting_bear.seed(seed)
+        env_backtesting_bear.action_space.seed(seed)
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bear = env_backtesting_bear.reset()
         logger.info("created instance env_backtesting_bear and reset env.")
@@ -676,7 +797,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
 
         ############## Backtesting starts ##############
         logger.info(f"##### STARTING BACKTESTING ON BEAR MARKET")
-        logger.info(f"---{settings.STRATEGY_MODE.upper()} Testing from: "
+        logger.info(f"---{strategy_mode.upper()} Testing from: "
                      f"{backtesting_bear_beginning} to {backtesting_bear_ending}, (ep={current_episode_number}).======")
 
         backtest_bear_start = time.time()
@@ -685,7 +806,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _ = ppo_model.predict(obs_backtest_bear)
+            action, _ = ppo_model.predict(new_obs=obs_backtest_bear, env_step_version=env_step_version, n_assets=assets_dim)
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bear, rewards, dones, _ = env_backtesting_bear.step(action)
@@ -701,7 +822,7 @@ def run_expanding_window_setup(df: pd.DataFrame, # todo: rename in rolling windo
         perf_start = time.time()
         calculate_performance_measures(run_path=results_dir,
                                        level="seed",
-                                       seed=settings.SEED,
+                                       seed=seed,
                                        mode="test",
                                        logger=logger)
         perf_end = time.time()

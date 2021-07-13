@@ -1,13 +1,14 @@
 import torch
 from torch import nn
 from torch.distributions import Normal
+import numpy as np
 import logging
 
 # import own libraries
-try:
-    from config.config import *
-except:
-    from config import *
+#try:
+#    from config.config import *
+#except:
+#    from config import *
 
 ########################################################################
 # CUSTOM NETWORK ARCHITECTURES FOR:
@@ -16,7 +17,7 @@ except:
 #           CRITIC NETWORK
 ########################################################################
 
-########## (SHARED) FEATURE EXTRACTOR
+########## SHARED FEATURE EXTRACTOR
 
 class FeatureExtractorNet(nn.Module):
     """
@@ -47,11 +48,16 @@ class FeatureExtractorNet(nn.Module):
             # such as their own custom learning rate scheduling and probably other things I might not have read about,
             # because they do not report all small implementation details which might have an impact))
             self.shared_feature_extractor = nn.Sequential(
-                nn.Linear(observations_size, 64, bias=True),
+                nn.Linear(observations_size, hidden_size, bias=True),
                 nn.Tanh(),
-                nn.Linear(64, mid_features_size, bias=True),
-                nn.Tanh()
+                #nn.Softmax(),
+                #nn.ReLU(), # relu here makes both layers have 0 gradient always, softmax() as well
+                nn.Linear(hidden_size, mid_features_size, bias=True),
+                nn.Tanh(),
+                #nn.ReLU() # note: when I used Relu activation, the agent gradients were always zero for some reason
             )
+            # input: observation_dim
+            # output: 64
 
     def forward(self, observations):
         """
@@ -73,11 +79,12 @@ class ActorNet(nn.Module):
   def __init__(self,
                # output dimension = number of actions to predict
                actions_num: int,
-               # number of intermdiate features (predicted / encoded by the features extractor net)
-               mid_features_size: int=64,
+               # number of intermediate features (predicted / encoded by the features extractor net)
+               mid_features_size: int = 64,
                # hidden size in hidden layer, if there is any
-               hidden_size: int=64,
-               version: str="base1",
+               hidden_size: int = 64,
+               version: str = "base1",
+               env_step_version: str = "paper",
                ):
     """
     mid_features_size  : size of the observation space / encoded features by feature extractor
@@ -89,27 +96,37 @@ class ActorNet(nn.Module):
     if version == "base1":
       # in the base version, as already discussed in the Feature extractor class,
       # the feature extraction is fully shared between actor and critic.
-      # acto r hence only consists of one additional layer for the actions
+      # actor hence only consists of one additional layer for the actions
+      # we want to get actions = how many stocks to buy (:100)
       self.action_mean_net = nn.Sequential(
           nn.Linear(mid_features_size, actions_num, bias=True),
           #nn.Tanh(),
           )
-      if env_params.STEP_VERSION == "newNoShort":
+      # in case we are using the "newNoShort" version of the step_version (see documentation),
+      # we have to add a softmax layer at the end (because we want to get actions = target portfolio weights)
+      if env_step_version == "newNoShort":
           self.action_mean_net = nn.Sequential(
               nn.Linear(mid_features_size, actions_num, bias=True),
               nn.Softmax(),
           )
-    elif version == "base2":
+    # in the base2 version, the network architecture is a bit larger, there is an additional layer for the actor
+    # beside the layer for action prediction. Therefore, the hidden size is also reduced a little, in order not to overfit
+    elif version == "base2": # an additional layer for the actions net only
         self.action_mean_net = nn.Sequential(
-            nn.Linear(mid_features_size, actions_num, bias=True),
+            nn.Linear(mid_features_size, hidden_size-32, bias=True),
+            nn.Tanh(),
+            nn.Linear(hidden_size-32, actions_num, bias=True),
             #nn.Tanh(), #tanh function as squashing function
         )
-        if env_params.STEP_VERSION == "newNoShort":
+        if env_step_version == "newNoShort":
             self.action_mean_net = nn.Sequential(
-                nn.Linear(mid_features_size, actions_num, bias=True),
+                nn.Linear(mid_features_size, hidden_size-32, bias=True),
+                nn.Tanh(),
+                nn.Linear(hidden_size-32, actions_num, bias=True),
                 nn.Softmax(dim=0),
             )
     # add log stdev as a parameter, initializes as 0 by default
+    # Note: this is because log(std) = 0 means that std = 1, since log(1)=0
     self.log_stdev = nn.Parameter(torch.ones(actions_num)*0)
 
   def forward(self, mid_features):
@@ -139,8 +156,8 @@ class CriticNet(nn.Module):
     """
     super(CriticNet, self).__init__()
 
-    if version == "base1" or version == "base2":
-      # base version is shared feature extractor with actor, and then only
+    if version == "base1":
+      # base1 version is shared feature extractor with actor and critic, and then only
       # one separate layer for critic for value output
       self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
                                       #nn.ReLU(),
@@ -149,6 +166,16 @@ class CriticNet(nn.Module):
                                       #nn.Linear(mid_features_size, 1, bias=True),
                                       nn.Linear(hidden_size, 1, bias=True),
                                       )
+    elif version == "base2":
+          # base2 version adds one more layer for the critic
+          self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
+                                         #nn.ReLU(),
+                                         nn.Linear(mid_features_size, hidden_size-32, bias=True),
+                                         nn.ReLU(),
+                                         nn.Linear(hidden_size-32, 1, bias=True)
+          )
+
+
   def forward(self, mid_features):
     """
     Take intermediate features (given by feature extractor) and
@@ -169,7 +196,7 @@ class CriticNet(nn.Module):
 # weight initialization is important to overcome the problem of exploding / vanishing gradients in very deep
 # neural networks. Since the network here is rather shallow, the way we initialize the weights doesn't have a huge impact.
 # (whether we do Xavier or He or orthogonal s/ orthonormal etc.)
-def init_weights_feature_extractor_net(module, gain=1.):
+def init_weights_feature_extractor_net(module, gain=np.sqrt(2)):
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, gain=gain)
         if module.bias is not None:
@@ -181,7 +208,6 @@ def init_weights_actor_net(module, gain=0.01):
         if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
-
 def init_weights_critic_net(module, gain=1.):
     if isinstance(module, nn.Linear):
         nn.init.orthogonal_(module.weight, gain=gain)
@@ -202,8 +228,9 @@ class BrainActorCritic(nn.Module):
                  hidden_size_critic: int = 64,
                  hidden_size_features_extractor: int = 64,
                  optimizer: torch.optim = torch.optim.Adam,
-                 learning_rate: float = 0.001,
+                 learning_rate: float = 0.001, #0.00025,
                  version: str = "base1",
+                 env_step_version: str = "paper",
                  ):
         super(BrainActorCritic, self).__init__()
         self.shared_feature_extractor = FeatureExtractorNet(observations_size=observations_size,
@@ -213,7 +240,8 @@ class BrainActorCritic(nn.Module):
         self.actor = ActorNet(actions_num=actions_num,
                               mid_features_size=mid_features_size,
                               hidden_size=hidden_size_actor,
-                              version=version)
+                              version=version,
+                              env_step_version=env_step_version)
 
         self.critic = CriticNet(mid_features_size=mid_features_size,
                                 hidden_size=hidden_size_critic,
@@ -231,7 +259,7 @@ class BrainActorCritic(nn.Module):
         # Setup optimizer with learning rate
         self.learning_rate = learning_rate
         self.optimizer = optimizer
-        # for Adam
+        # for Adam, apply optimizer to all the parameters in all the three networks
         self.optimizer = self.optimizer(list(self.shared_feature_extractor.parameters()) +
                                         list(self.actor.parameters()) +
                                         list(self.critic.parameters()),
@@ -263,6 +291,8 @@ class BrainActorCritic(nn.Module):
         #print("agent: action means")
         #print(action_means)
         # get estimated log stdev parameter (like a bias term of the last layer) appended to the actor network
+        # Note: it is a nn.Parameter, which is like a tensor added to the module of Pytorch and it is a bit badly
+        # documented but apparently this is like a bias term that gets changed as well when the network trains.
         log_stdev = self.actor.log_stdev
         # convert log standard deviation to stdev
         stdev = log_stdev.exp()
@@ -282,8 +312,6 @@ class BrainActorCritic(nn.Module):
             # We want to find out: how likely are the actions we have taken during the trajectories sampling
             # (into the Buffer) now, after we have updated our policy with a backward pass?
             # Note: in the first round, we have not yet updated our policy, hence the probabilities we will get will be the same
-            #print("agent, eval: stdev")
-            #print(stdev)
             # get new action log probabilities for the old actions using peviously defined Normal distribution (actions_distribution)
             actions_log_probs = actions_distribution.log_prob(actions)
 
@@ -292,7 +320,7 @@ class BrainActorCritic(nn.Module):
             # and we have log probas, hence we can sum the log probabilities up
 
             # IMPORTANT: if our batch is of length 1, we sum across the first dimension,
-            # because we don't want to sum action log probabilities over lal days, but just the action log probabilities ove rall actions of ONE day
+            # because we don't want to sum action log probabilities over all days, but just the action log probabilities ove rall actions of ONE day
             # (at first I got a lot of errors because of not considering his and the actor had no gradient)
             # same for entropy below
             if len(actions_log_probs.shape) > 1:
@@ -311,12 +339,15 @@ class BrainActorCritic(nn.Module):
             # entropy of a Normal distribution with std 1 =~1.4189
             # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived/1804829
             # so this will be the first entropy value we will get before any backpropagation
-            # (this is good to know for debugging / to ckeck if code works properly)
+            # (this is good to know for debugging / to check if code works properly)
             return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
 
-        else:
+        else: # by default,forward pass
             # here we sample actions from the distribution => non-deterministic, in order to add some exploration
-            action_samples = actions_distribution.sample()
+            action_samples = actions_distribution.rsample()
+            # Note: rsample() supports gradient calculation through the sampler, in contrast to sample()
+            # https://forum.pyro.ai/t/sample-vs-rsample/2344
+
             # get action log probabilities with current action samples.
             # This part of the function is used when we forward pass during trajectories collection into the buffer
             actions_log_probs = actions_distribution.log_prob(action_samples)
@@ -329,7 +360,13 @@ class BrainActorCritic(nn.Module):
                 actions_joint_log_proba = actions_log_probs.sum()
             return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution, stdev
 
-    def predict(self, new_obs):
+    def predict(self, new_obs, deterministic=False):
+        # deterministic / non-deterministic:
+        # https://datascience.stackexchange.com/questions/56308/why-do-trained-rl-agents-still-display-stochastic-exploratory-behavior-on-test
+        # note: it somehow yields better result in testing when sampling (non-deterministic) actions than when I use the mean directly
+        # this is probably because the probability distribution is part of the agent model and therefore model-leaning
+        # predictions should be sampled
+
         # change new observation to torch tensor, if it is not already a torch tensor
         if isinstance(new_obs, torch.Tensor):
             pass
@@ -341,8 +378,18 @@ class BrainActorCritic(nn.Module):
         action_means = self.actor(mid_features)
         # get value from critic (usually not needed but for debugging)
         value = self.critic(mid_features)
-        # we predict deterministically, hence we can just take the action means (most probable action from the distribution)
-        predicted_actions = action_means
+        if deterministic == True:
+            # if we predict deterministically, we can just take the action means (most probable action from the distribution)
+            predicted_actions = action_means
+        elif deterministic == False:
+            # if we predict stochastically, we have to sample an action from our distribution,
+            # which represents our actual model
+            log_stdev = self.actor.log_stdev
+            stdev = log_stdev.exp()
+            stdev_vector = torch.ones_like(action_means) * stdev
+            actions_distribution = Normal(action_means, stdev_vector)
+            action_samples = actions_distribution.rsample()
+            predicted_actions = action_samples
         predicted_value = value
         # note: prediction here is deterministic; we take the action means (= the output of the actor network)
         # we could also sample an action from our actor network instead (non-deterministic prediction),

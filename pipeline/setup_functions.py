@@ -9,9 +9,10 @@ from config.dataprep_config import *
 
 def load_dataset(*,
                  file_path: str,
-                 col_subset: list = data_settings.FEATURES_LIST,
+                 col_subset: list,
                  date_subset: str = "datadate",
                  date_subset_startdate: int = 19950101,
+                 asset_name_column: str="tic",
                  ) -> pd.DataFrame:
     """
     Load the .csv dataset from the provided file path.
@@ -37,7 +38,7 @@ def load_dataset(*,
         df = df[df[date_subset] >= date_subset_startdate]
 
     if col_subset is not None:
-        subcols = [date_subset, data_settings.ASSET_NAME_COLUMN] + col_subset
+        subcols = [date_subset, asset_name_column] + col_subset
         df = df[subcols]
 
     return df
@@ -45,6 +46,15 @@ def load_dataset(*,
 def create_dirs(mode: str = "run_dir", # "seed_dir"
                 results_dir: str = "",
                 trained_dir: str = "",
+                results_path: str = "results",
+                trained_models_path: str = "trained_models",
+                now: str = "",
+                strategy_mode: str = "ppoCustomBase",
+                features_mode: str = "",
+                reward_measure: str = "",
+                run_mode: str = "",
+                seed: int=None,
+                subdir_names: dict = {},
                 ) -> list:
     """
     Functin to create directories at the beginning of each run, based on paths specified in the config.py file,
@@ -56,40 +66,39 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
     @param trained_dir: name of trained models directory.
     @return:
     """
-    results_path = paths.RESULTS_PATH
-    trained_models_path = paths.TRAINED_MODELS_PATH
-
     if mode == "run_dir":
         ### RESULTY DIRECTORY
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
         results_dir = os.path.join(results_path,
-                                   f"{settings.NOW}_{settings.STRATEGY_MODE}_"
-                                   f"{data_settings.FEATURES_MODE}"
-                                   f"_{settings.RUN_MODE}")
+                                   f"{now}"
+                                   f"_{strategy_mode}_"
+                                   f"_reward_{reward_measure}"
+                                   f"_{features_mode}"
+                                   f"_{run_mode}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
 
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
-        trained_dir = os.path.join(trained_models_path, f"{settings.NOW}"
-                                                              f"_{settings.STRATEGY_MODE}"
-                                                              f"_rew_{settings.REWARD_MEASURE}"
-                                                              f"_{data_settings.FEATURES_MODE}"
-                                                              f"_{settings.RUN_MODE}")
+        trained_dir = os.path.join(trained_models_path, f"{now}"
+                                                        f"_{strategy_mode}"
+                                                        f"_reward_{reward_measure}"
+                                                        f"_{features_mode}"
+                                                        f"_{run_mode}")
         os.makedirs(trained_dir)
         return [results_dir, trained_dir]
 
     if mode == "seed_dir":
-        ### RESULTY SUBDIRECTORY
+        ### RESULTS SUBDIRECTORY
         # creating results sub-directory, one for each seed (for which the algorithm is run) within one run
-        results_subdir = os.path.join(results_dir, f"randomSeed{settings.SEED}")
+        results_subdir = os.path.join(results_dir, f"randomSeed{seed}")
         os.makedirs(results_subdir)
         ### TRAINED MODEL SUBDIRECTORY
-        trained_subdir = os.path.join(trained_dir, f"randomSeed{settings.SEED}")
+        trained_subdir = os.path.join(trained_dir, f"randomSeed{seed}")
         os.makedirs(trained_subdir)
 
         # creating sub-sub-directories for the actual results folders (e.g. portfolio_value etc.)
         # where the resulting .csv files are saved during the run
         # the names of the sub-sub-directories are defined in the config file under paths.SUBSUBDIR_NAMES
-        for dirname in paths.SUBSUBDIR_NAMES.keys():
+        for dirname in subdir_names.keys():
             subdir_path = os.path.join(results_subdir, dirname)
             os.makedirs(subdir_path)
         del subdir_path
@@ -97,9 +106,57 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
 
 def config_logging_to_txt(results_subdir,
                           trained_subdir,
-                          logsave_path
+                          logsave_path,
+                          now,
+                          seeds_list,
+                          strategy_mode,
+                          reward_measure,
+                          retrain_data,
+                          run_mode,
+                          global_startdate_train,
+                          global_enddate_train,
+                          roll_window,
+                          startdate_backtesting_bull,
+                          enddate_backtesting_bull,
+                          startdate_backtesting_bear,
+                          enddate_backtesting_bear,
+                          env_step_version,
+                          hmax_normalize,
+                          initial_cash_balance,
+                          transaction_fee,
+                          reward_scaling,
+                          country,
+                          features_list,
+                          single_features_list,
+                          features_mode,
+                          data_path,
+                          raw_data_path,
+                          preprocessed_data_path,
+                          trained_models_path ,
+                          results_path,
+                          subdir_names,
+                          preprocessed_data_file,
+                          now_hptuning,
+                          only_hptuning,
+                          gamma_list,
+                          gae_lam_list,
+                          clip_list,
+                          critic_loss_coef_hpt,
+                          entropy_loss_coef_hpt,
+                          net_version,
+                          batch_size,
+                          num_epochs,
+                          optimizer,
+                          optimizer_lr,
+                          gamma,
+                          gae_lam,
+                          clip_epsilon,
+                          critic_loss_coef,
+                          entropy_loss_coef,
+                          max_gradient_norm,
+                          total_timesteps_to_collect,
+                          total_episoded_to_train,
                           ) -> None:
-    # todo: create support_functions and move there
     """
     Writes all configurations and related parameters into the config_log.txt file.
 
@@ -117,76 +174,76 @@ def config_logging_to_txt(results_subdir,
                         "------------------------------------\n"
                         "SETTINGS\n"
                         "------------------------------------\n"
-                        f"NOW                  : {settings.NOW}\n"
-                        f"SEEDS LIST           : {settings.SEEDS_LIST}\n"
-                        f"STRATEGY_MODE        : {settings.STRATEGY_MODE}\n"
-                        f"REWARD_MEASURE       : {settings.REWARD_MEASURE}\n"
-                        f"RETRAIN_DATA         : {settings.RETRAIN_DATA}\n"
-                        f"RUN_MODE             : {settings.RUN_MODE}\n"
-                        f"STARTDATE_TRAIN      : {settings.STARTDATE_TRAIN}\n"
-                        f"ENDDATE_TRAIN        : {settings.ENDDATE_TRAIN}\n"
-                        f"ROLL_WINDOW          : {settings.ROLL_WINDOW}\n"
-                        f"STARTDATE_BT_BULL    : {settings.STARTDATE_BACKTESTING_BULL}\n"
-                        f"ENDDATE_BT_BULL      : {settings.ENDDATE_BACKTESTING_BULL}\n"
-                        f"STARTDATE_BT_BEAR    : {settings.STARTDATE_BACKTESTING_BEAR}\n"
-                        f"ENDDATE_BT_BEAR      : {settings.ENDDATE_BACKTESTING_BEAR}\n"
+                        f"NOW                  : {now}\n"
+                        f"SEEDS LIST           : {seeds_list}\n"
+                        f"STRATEGY_MODE        : {strategy_mode}\n"
+                        f"REWARD_MEASURE       : {reward_measure}\n"
+                        f"RETRAIN_DATA         : {retrain_data}\n"
+                        f"RUN_MODE             : {run_mode}\n"
+                        f"STARTDATE_TRAIN      : {global_startdate_train}\n"
+                        f"ENDDATE_TRAIN        : {global_enddate_train}\n"
+                        f"ROLL_WINDOW          : {roll_window}\n"
+                        f"STARTDATE_BT_BULL    : {startdate_backtesting_bull}\n"
+                        f"ENDDATE_BT_BULL      : {enddate_backtesting_bull}\n"
+                        f"STARTDATE_BT_BEAR    : {startdate_backtesting_bear}\n"
+                        f"ENDDATE_BT_BEAR      : {enddate_backtesting_bear}\n"
                         "------------------------------------\n"
                         f"ENVIRONMENT VARIABLES\n"
                         "------------------------------------\n"
-                        f"STEP_VERSION             : {env_params.STEP_VERSION}\n"
-                        f"HMAX_NORMALIZE           : {env_params.HMAX_NORMALIZE}\n"
-                        f"INITIAL_CASH_BALANCE     : {env_params.INITIAL_CASH_BALANCE}\n"
-                        f"TRANSACTION_FEE_PERCENT  : {env_params.TRANSACTION_FEE_PERCENT}\n"
-                        f"REWARD_SCALING           : {env_params.REWARD_SCALING}\n"
+                        f"STEP_VERSION             : {env_step_version}\n"
+                        f"HMAX_NORMALIZE           : {hmax_normalize}\n"
+                        f"INITIAL_CASH_BALANCE     : {initial_cash_balance}\n"
+                        f"TRANSACTION_FEE_PERCENT  : {transaction_fee}\n"
+                        f"REWARD_SCALING           : {reward_scaling}\n"
                         "------------------------------------\n"
                         f"DATA PREPARATION SETTINGS\n"
                         "------------------------------------\n"
-                        f"DATA / COUNTRY           : {data_settings.COUNTRY}\n"
-                        f"FEATURES_LIST            : {data_settings.FEATURES_LIST}\n"
-                        f"FEATURES_MODE            : {data_settings.FEATURES_MODE}\n"
+                        f"DATA / COUNTRY           : {country}\n"
+                        f"FEATURES_LIST            : {features_list}\n"
+                        f"SINGLE_FEATURES_LIST     : {single_features_list}\n"
+                        f"FEATURES_MODE            : {features_mode}\n"
                         "------------------------------------\n"
                         f"PATHS AND DIRECTORIES\n"
                         "------------------------------------\n"
-                        f"DATA_PATH                : {paths.DATA_PATH}\n"
-                        f"RAW_DATA_PATH            : {paths.RAW_DATA_PATH}\n"
-                        f"PREPROCESSED_DATA_PATH   : {paths.PREPROCESSED_DATA_PATH}\n"
-                        f"TRAINED_MODELS_PATH      : {paths.TRAINED_MODELS_PATH}\n"
-                        f"RESULTS_PATH             : {paths.RESULTS_PATH}\n"
-                        f"SUBDIR_NAMES             : {paths.SUBSUBDIR_NAMES}\n"
-                        f"PREPROCESSED_DATA_FILE   : {paths.PREPROCESSED_DATA_FILE}\n"
+                        f"DATA_PATH                : {data_path}\n"
+                        f"RAW_DATA_PATH            : {raw_data_path}\n"
+                        f"PREPROCESSED_DATA_PATH   : {preprocessed_data_path}\n"
+                        f"TRAINED_MODELS_PATH      : {trained_models_path}\n"
+                        f"RESULTS_PATH             : {results_path}\n"
+                        f"SUBDIR_NAMES             : {subdir_names}\n"
+                        f"PREPROCESSED_DATA_FILE   : {preprocessed_data_file}\n"
                         f"RESULTS_DIR              : {results_subdir}\n"
                         f"TRAINED_MODEL_DIR        : {trained_subdir}\n"
                         "------------------------------------\n"
                         f"HYPERPARAMETER TUNING\n"
                         "------------------------------------\n"
-                        f"now_hptuning              : {hptuning_config.now_hptuning}\n"
-                        f"only_hptuning             : {hptuning_config.only_hptuning}\n"
+                        f"now_hptuning              : {now_hptuning}\n"
+                        f"only_hptuning             : {only_hptuning}\n"
                         f"--parameters to tune--\n"
-                        f"GAMMA_LIST                : {hptuning_config.GAMMA_LIST}\n"
-                        f"GAE_LAMBDA_LIST           : {hptuning_config.GAE_LAMBDA_LIST}\n"
-                        f"CLIP_EPSILON_LIST         : {hptuning_config.CLIP_EPSILON_LIST}\n"
-                        f"CRITIC_LOSS_COEF_LIST     : {hptuning_config.CRITIC_LOSS_COEF_LIST}\n"
-                        f"ENTROPY_LOSS_COEF_LIST    : {hptuning_config.ENTROPY_LOSS_COEF_LIST}\n"
+                        f"GAMMA_LIST                : {gamma_list}\n"
+                        f"GAE_LAMBDA_LIST           : {gae_lam_list}\n"
+                        f"CLIP_EPSILON_LIST         : {clip_list}\n"
+                        f"CRITIC_LOSS_COEF_LIST     : {critic_loss_coef_hpt}\n"
+                        f"ENTROPY_LOSS_COEF_LIST    : {entropy_loss_coef_hpt}\n"
                         )
 
     if settings.STRATEGY_MODE == "ppoCustomBase":
         with open(txtfile_path, "a") as text_file:
-            text_file.write(f"NET_VERSION                   : {agent_params.ppoCustomBase.NET_VERSION}\n"
-                            f"BATCH_SIZE                    : {agent_params.ppoCustomBase.BATCH_SIZE}\n"
-                            f"NUM_EPOCHS                    : {agent_params.ppoCustomBase.NUM_EPOCHS}\n"
-                            f"OPTIMIZER                     : {agent_params.ppoCustomBase.OPTIMIZER}\n"
-                            f"OPTIMIZER_LEARNING_RATE       : {agent_params.ppoCustomBase.OPTIMIZER_LEARNING_RATE}\n"
-                            f"GAMMA                         : {agent_params.ppoCustomBase.GAMMA}\n"
-                            f"GAE_LAMBDA                    : {agent_params.ppoCustomBase.GAE_LAMBDA}\n"
-                            f"CLIP_EPSILON                  : {agent_params.ppoCustomBase.CLIP_EPSILON}\n"
-                            f"MAX_KL_VALUE                  : {agent_params.ppoCustomBase.MAX_KL_VALUE}\n"
-                            f"CRITIC_LOSS_COEF              : {agent_params.ppoCustomBase.CRITIC_LOSS_COEF}\n"
-                            f"ENTROPY_LOSS_COEF             : {agent_params.ppoCustomBase.ENTROPY_LOSS_COEF}\n"
-                            f"MAX_GRADIENT_NORMALIZATION    : {agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION}\n"
-                            f"TOTAL_TIMESTEPS_TO_COLLECT    : {agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT}\n"
-                            f"TOTAL_TIMESTEPS_TO_TRAIN      : {agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN}\n"
+            text_file.write(f"NET_VERSION                   : {net_version}\n"
+                            f"BATCH_SIZE                    : {batch_size}\n"
+                            f"NUM_EPOCHS                    : {num_epochs}\n"
+                            f"OPTIMIZER                     : {optimizer}\n"
+                            f"OPTIMIZER_LEARNING_RATE       : {optimizer_lr}\n"
+                            f"GAMMA                         : {gamma}\n"
+                            f"GAE_LAMBDA                    : {gae_lam}\n"
+                            f"CLIP_EPSILON                  : {clip_epsilon}\n"
+                            f"CRITIC_LOSS_COEF              : {critic_loss_coef}\n"
+                            f"ENTROPY_LOSS_COEF             : {entropy_loss_coef}\n"
+                            f"MAX_GRADIENT_NORMALIZATION    : {max_gradient_norm}\n"
+                            f"TOTAL_TIMESTEPS_TO_COLLECT    : {total_timesteps_to_collect}\n"
+                            f"TOTAL_TIMESTEPS_TO_TRAIN      : {total_episoded_to_train}\n"
                             )
-    elif settings.STRATEGY_MODE == "ppo":
+    elif settings.STRATEGY_MODE == "ppo": # todo: rm
         with open(txtfile_path, "a") as text_file:
             text_file.write(f"POLICY             : {agent_params.ppo.POLICY}\n"
                             f"ENT_COEF           : {agent_params.ppo.ENT_COEF}\n"
@@ -213,15 +270,6 @@ def config_logging_to_txt(results_subdir,
                             f"TRAINING_TIMESTEPS : {agent_params.ppo.TRAINING_TIMESTEPS}\n")
     return None
 
-
-#logging.basicConfig(filename=os.path.join(logsave_path, f"run_log_seed_{seed}"),
-#                    filemode='a',
-#                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-#                    datefmt='%H:%M:%S',
-#                    # level=logging.INFO
-#                    # level=logging.DEBUG
-#                    level=logging.NOTSET)
-
 def custom_logger(seed: int,
                   logging_path: str,
                   level: logging = logging.NOTSET):
@@ -234,20 +282,15 @@ def custom_logger(seed: int,
     logger.setLevel(level)
     format_string = '%(asctime)s %(levelname)s %(message)s'
     log_format = logging.Formatter(format_string)
-    # Creating and adding the console handler
-    #console_handler = logging.StreamHandler(sys.stdout)
-    #console_handler.setFormatter(log_format)
-    #logger.addHandler(console_handler)
-    # Creating and adding the file handler
     filemode = 'a'
     file_handler = logging.FileHandler(filename, mode=filemode)
     file_handler.setFormatter(log_format)
     logger.addHandler(file_handler)
     return logger
 
-
 def get_data_params(final_df: pd.DataFrame,
-                    feature_cols = data_settings.FEATURES_LIST,
+                    feature_cols: list = [],
+                    single_feature_cols: list = [],
                     asset_name_column="tic",
                     ) -> list:
     """
@@ -262,6 +305,7 @@ def get_data_params(final_df: pd.DataFrame,
     df = final_df.copy()
     n_individual_assets = len(df[asset_name_column].unique())
     n_features = len(feature_cols)
+    n_single_features = len(single_feature_cols)
 
-    return [n_individual_assets, n_features]
+    return [n_individual_assets, n_features, n_single_features]
 

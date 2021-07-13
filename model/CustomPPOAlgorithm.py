@@ -1,13 +1,11 @@
 import numpy as np
 from torch import nn
 import pandas as pd
+import os
 import matplotlib.pyplot as plt
+import torch
 
 # import own libraries (using try-except in the case files have been uploaded separately to google Colab) # todo remove try-excepts
-try:
-    from config.config import *
-except:
-    from config import *
 try:
     from model.CustomOnPolicyBuffer import OnPolicyBuffer
 except:
@@ -42,6 +40,8 @@ class PPO_algorithm():
                  brain,
                  buffer,
                  current_episode: int,
+                 # number of assets, needed for the scaling function
+                 assets_dim: int,
                  # optional validation env for e.g. early stopping based on average reward
                  env_validation=None,
                  # params for neural network
@@ -71,17 +71,19 @@ class PPO_algorithm():
                  logger=None,
                  # path where loss curves etc. are saved
                  performance_save_path: str = None,
+                 env_step_version: str = "paper",
                  ):
         """
         Here, the variables and hyperparameters are initialized.
         """
         self.logger = logger
-        ### initialize classes we need for PPO agent construction
+        ### initialize classes we need for PPO agent construction and their parameters
         self.Env = env_train
         self.Env_firstday = train_env_firstday
         self.EnvVal = env_validation
         self.EnvVal_firstday = val_env_firstday
-
+        self.env_step_version = env_step_version
+        self.assets_dim = assets_dim
         self.Brain = brain
         self.OnPolicyBuffer = buffer
 
@@ -102,7 +104,7 @@ class PPO_algorithm():
         self.max_kl_value = max_kl_value
         self.critic_loss_coef = critic_loss_coef
         self.entropy_loss_coef = entropy_loss_coef
-        # total training steps of experience we wantto collect to the buffer storage
+        # total training steps of experience we want to collect to the buffer storage
         self.total_timesteps_to_collect = total_timesteps_to_collect
 
         self.performance_save_path = performance_save_path
@@ -125,7 +127,16 @@ class PPO_algorithm():
         """
         # get first state / observation from the environment by resetting it
         self.logger.info("env_firstday: "+str(self.Env_firstday))
+
+        # get first observation from training environment
         obs = self.Env.reset(day=self.Env_firstday)#, initial=True)
+        print("obs: ")
+        print(obs)
+        # scale the observation (see documentation at the bottom for function "scale_observations"
+        obs = self.scale_observations(obs=obs, env_step_version=self.env_step_version, n_assets=self.assets_dim)
+        print("scaled_obs: ")
+        print(obs)
+
         self.logger.info("train env reset, first obs: ")
         self.logger.info(obs[0:100]) # to check if the observations are correct
         #self.logger.info("data ", self.Env.data)
@@ -173,10 +184,10 @@ class PPO_algorithm():
             # but could also use other, like e.g. Beta distribution), and that leads to actions not
             # necessarily being within the boundaries of the defined action space (note: I am using gym.Box for action space)
             # clipping is used by most implementations online, including stable baselines
-            if env_params.STEP_VERSION == "paper":
+            if self.env_step_version == "paper":
                 # clip actions to be between action space limits (in paper [-1,1]
                 actions_clipped = np.clip(actions, self.Env.action_space.low, self.Env.action_space.high)
-            elif env_params.STEP_VERSION == "newNoShort":
+            elif self.env_step_version == "newNoShort":
                 # apply softmax again in sampled actions in order to make a vector of target weights
                 # which are all between [0,1] and sum up to one together.
                 actions_clipped = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
@@ -187,6 +198,8 @@ class PPO_algorithm():
             # in order to obtain the new state, a reward and a mask (done; True if
             # end of trajectory (dataset) reached, else False))
             new_obs, reward, done, _ = self.Env.step(actions_clipped)
+            # scale the observations
+            new_obs = self.scale_observations(obs=new_obs, env_step_version=self.env_step_version, n_assets=self.assets_dim)
 
             # SAVE TRAJECTORY: add obtained experience data to OnPolicyBuffer storage
             self.OnPolicyBuffer.add(obs, "obs", position=current_timesteps_collected)
@@ -326,7 +339,7 @@ class PPO_algorithm():
                     # many people say that it therefore makes learning more stable
                     # at the end, a very small number s added (e.g. 1e-100) so that we never divide by 0
                     advantage_est_standardized = (batch_advantages - batch_advantages.mean()) / \
-                                                 (batch_advantages.std() + 1e-8)
+                                                 (batch_advantages.std() + 1e-100)
 
                     # convert the actions from the batch (old actions, since these are actions with the "old" policy, the one
                     # we used to sample trajectories into the buffer) to torch tensor, since we are going to use them so
@@ -347,72 +360,49 @@ class PPO_algorithm():
                     # log probabilities are used as a convention, because they make calculations easier
                     # see also: https://cs.stackexchange.com/questions/70518/why-do-we-use-the-log-in-gradient-based-reinforcement-algorithms
                     # note: the log probabilities are scalars, hence the probability ratio will be a scalar value as well, not a vector of ratios
-                    # self.logger.info("current action log probs: ")
-                    # self.logger.info(current_action_new_log_prob)
-                    # self.logger.info("action log probs: " )
-                    # self.logger.info(batch_actions_log_probs)
-                    #self.logger.info("action new log prob:")
-                    #self.logger.info(current_action_new_log_prob)
-                    #self.logger.info("action old log prob:")
-                    #self.logger.info(batch_actions_log_probs)
 
                     proba_ratio = torch.exp(current_action_new_log_prob - batch_actions_log_probs)
-                    #self.logger.info("proba ration: ")
-                    #self.logger.info(proba_ratio)
                     # in the first iteration (before first policy update),
                     # the ratio should be 1, since we will sample the same actions with the same net weights every time
                     ###  ACTOR LOSS (POLICY LOSS, SURROGATE LOSS)
                     # r * A
                     surr_loss_1 = proba_ratio * advantage_est_standardized
-                    #self.logger.info("surr loss 1: ", surr_loss_1)
-                    #self.logger.info(surr_loss_1)
+                    # this can be: negative, if adv. negative, else positive
 
                     # clipped_r * A
                     surr_loss_2 = torch.clamp(proba_ratio,
                                               min=1 - self.clip_epsilon,
                                               max=1 + self.clip_epsilon) * advantage_est_standardized
-                    #self.logger.info("surr loss 2: ")
-                    #self.logger.info(surr_loss_2)
+                    # this can be negative if the advantage is negative,
+                    # but it will be equal or smaller than surr_loss1, because it is clipped
 
                     # Note: because we will use gradient descent, not gradient Ascent, we need to take the negative of the surrogate function
                     # (in the paper, they maximize the (non-negative) surrogate function / loss with Gradient ascent)
                     surr_loss = torch.min(surr_loss_1, surr_loss_2)
-                    #self.logger.info("surr loss: ")
-                    #self.logger.info(surr_loss)
 
                     # calculate the clipped surrogate los (=actor loss / policy network loss)
                     # since the actor loss in the paper is actually defined as "actor gain", so we would have to maximize it with
                     # gradient ascent; but here we want to use gradient descent so we will take the negative of the surrogate loss mean
                     actor_loss = torch.mean(-surr_loss)
-                    #self.logger.info("actor loss: ")
-                    #self.logger.info(actor_loss)
 
                     ### CRITIC LOSS (VALUE LOSS)
                     # Value loss using the TD(gae_lambda) target in the calculation of the returns (hence more smooth, less variance)
                     # it is the mean squared error between the estimated state value V and the actual returns (smoothed)
-                    # self.logger.info("new v est: ")
-                    # self.logger.info(new_V_estimate)
-                    # self.logger.info("batch returns: ")
-                    # self.logger.info(batch_returns)
                     # we need to flatten the new value estimates, because its a tensor like this: [[v1],[v1], ...]
                     # and we need it to be like this: [v1,v2,...] (rewards are also like this), else we et an error below
                     new_V_estimate = new_V_estimate.flatten()
                     # Note: since critic loss = MSE loss (mean squared error), it is always going to be positive
                     critic_loss = nn.functional.mse_loss(new_V_estimate, batch_returns)  # returns used as target value
-                    #self.logger.info("critic loss: ")
-                    #self.logger.info(critic_loss)
 
                     ### ENTROPY LOSS
                     entropy_loss = -torch.mean(action_distr_entropy)
-                    #self.logger.info("entropy loss: ")
-                    #self.logger.info(entropy_loss)
 
                     # TOTAL LOSS FUNCTION:
-                    # Note: the total loss for gradient ascent would be: actor_loss - c1*critic_loss + c2*entropy_loss,
+                    # Note: the total loss for gradient ascent would be: actor_loss(=gain) - c1*critic_loss(=loss) + c2*entropy_loss(=gain),
                     # but since we do gradient descent, actor_loss and entropy loss are negative, value loss is positive (opposite signs)
+                    # note: the negative sign for the actor loss has already been added some lines above when we took the negative of the
+                    # surrogate function, similarly for the entropy loss above
                     total_loss = actor_loss + self.critic_loss_coef * critic_loss + self.entropy_loss_coef * entropy_loss
-                    #self.logger.info("total loss:")
-                    #self.logger.info(total_loss)
 
                     # UPDATING THE ACTOR-CRITIC MODEL (Updates policy, feature extractor and value network)
                     # Note: we first need to call zero_grad() on the optimizer, in order to clear all the gradients from the previous iteration,
@@ -420,14 +410,27 @@ class PPO_algorithm():
                     # then we use loss.backward() to backpropagate the loss and compute the current gradients (derivatives w.r.t. the parameters) for the current batch
                     # then we use a gradient clipping method in order to make sure that our gradients don't "explode"
                     # see also: https://www.reddit.com/r/MachineLearning/comments/4qshk3/max_norm_gradientweight_clipping_for/
-                    # then we use optimizer.step(), with this we take a step in the direction of the graidnet: this is the actual update step, where our weights are updated
+                    # then we use optimizer.step(), with this we take a step in the direction of the gradient: this is the actual update step, where our weights are updated
                     # see also: https://discuss.pytorch.org/t/what-step-backward-and-zero-grad-do/33301
                     self.Brain.optimizer.zero_grad()
                     total_loss.backward()
                     # avoiding exploding gradients with gradient normalization:
                     # https://machinelearningmastery.com/how-to-avoid-exploding-gradients-in-neural-networks-with-gradient-clipping/
+                    # https://www.reddit.com/r/MachineLearning/comments/4qshk3/max_norm_gradientweight_clipping_for/
                     # default value the same as the one from stable baselines for reproducibility purposes
                     torch.nn.utils.clip_grad_norm_(self.Brain.parameters(), self.max_gradient_normalization)
+                    self.logger.info("Brain SFE parameters before optimizer step ")
+                    for name, param in self.Brain.shared_feature_extractor.named_parameters():
+                        if param.requires_grad:
+                            self.logger.info(f"name: {name}")
+                            self.logger.info(param)
+
+                    self.logger.info("Brain gradients before optimizer step ")
+                    for name, param in self.Brain.named_parameters():
+                        if param.requires_grad:
+                            self.logger.info(f"name: {name}")
+                            self.logger.info(param.grad)
+                    # now, finally, we take ONE step in the direction of the gradient
                     self.Brain.optimizer.step()
 
                     # AT THE END OF EACH BATCH:
@@ -440,14 +443,15 @@ class PPO_algorithm():
                     surr_loss_2_of_epoch.append(np.array(surr_loss_2.detach()).flatten())
                     surr_loss_of_epoch.append(np.array(surr_loss.detach()).flatten())
                     advantages_of_epoch.append(np.array(advantage_est_standardized.detach()).flatten())
+                    standard_deviations_of_epoch.append(np.array(stdev.detach()).flatten())
+                    action_means_of_epoch.append(np.array(action_means.detach()).flatten())
                     # metrics that come as single values per batch (each of length 1)
                     # => list of values
                     actor_loss_of_epoch.append(actor_loss.detach())
                     critic_loss_of_epoch.append(critic_loss.detach())
                     entropy_loss_of_epoch.append(entropy_loss.detach())
                     combined_loss_of_epoch.append(total_loss.detach())
-                    standard_deviations_of_epoch.append(stdev)
-                    action_means_of_epoch.append(np.array(action_means.detach()))
+
 
                     #update learning timesteps only for first (or any, just only one) epoch,
                     # because we only want to count the data samples we train on (not how often we trained on them)
@@ -472,19 +476,19 @@ class PPO_algorithm():
                 # (each below will then be a list of lists)
                 # => list (for all epochs together) of lists (one for each epoch) of values (one for each obs in batch, e.g. 64)
                 # [[v,v,v],[v,v,v],[v,v,v],...] = [epoch1, epoch2, ...]
+                # a vector or array per day
                 advantages_all_epochs.append(np.array(advantages_of_epoch).flatten())
                 prob_ratio_all_epochs.append(np.array(prob_ratio_of_epoch).flatten())
                 surr_loss_1_all_epochs.append(np.array(surr_loss_1_of_epoch).flatten())
                 surr_loss_2_all_epochs.append(np.array(surr_loss_2_of_epoch).flatten())
                 surr_loss_all_epochs.append(np.array(surr_loss_of_epoch).flatten())
+                standard_deviations_all_epochs.append(np.array(standard_deviations_of_epoch).flatten()) # one std for all actions for each day (64 for a batch)
+                action_means_all_epochs.append(np.array(action_means_of_epoch).flatten()) # at each day, n_asset number of actions
+                # one loss per batch
                 actor_loss_all_epochs.append(actor_loss_of_epoch)
                 critic_loss_all_epochs.append(critic_loss_of_epoch)
                 entropy_loss_all_epochs.append(entropy_loss_of_epoch)
                 combined_loss_all_epochs.append(combined_loss_of_epoch)
-                standard_deviations_all_epochs.append(standard_deviations_of_epoch) # one for each batch
-                action_means_all_epochs.append(action_means_of_epoch)
-                print("action means all epochs:")
-                print(action_means_all_epochs)
 
                 self.logger.info(f"---EPOCH: {epoch} / {self.num_epochs} done.")
                 self.logger.info(f"total Epoch loss: {np.sum(combined_loss_of_epoch)}")
@@ -494,9 +498,11 @@ class PPO_algorithm():
             # after all 10 (or other) epochs, we save the data to csv
             if self.performance_save_path != None:
                 for li, liname in zip([advantages_all_epochs, prob_ratio_all_epochs, surr_loss_1_all_epochs,
-                                       surr_loss_2_all_epochs, surr_loss_all_epochs],
+                                       surr_loss_2_all_epochs, surr_loss_all_epochs, standard_deviations_all_epochs,
+                                       action_means_all_epochs],
                                       ["advantages_all_epochs", "prob_ratio_all_epochs", "surr_loss_1_all_epochs",
-                                       "surr_loss_2_all_epochs", "surr_loss_all_epochs"]):
+                                       "surr_loss_2_all_epochs", "surr_loss_all_epochs", "standard_deviations_all_epochs",
+                                       "action_means_all_epochs"]):
                     pd.DataFrame(np.transpose(li),
                              columns=epoch_colnames).to_csv(os.path.join(self.performance_save_path,
                                                                              f"{liname}_"
@@ -507,8 +513,6 @@ class PPO_algorithm():
                               "critic_loss": np.array(critic_loss_all_epochs).flatten(),
                               "entropy_loss": np.array(entropy_loss_all_epochs).flatten(),
                               "combined_loss": np.array(combined_loss_all_epochs).flatten(),
-                              "action_means": np.array(action_means_all_epochs).flatten(),
-                              "standard_deviations":  np.array(standard_deviations_all_epochs).flatten(),
                               }).to_csv(os.path.join(self.performance_save_path,
                                                      f"train_performances_"
                                                      f"ep{self.current_episode}_"
@@ -527,9 +531,13 @@ class PPO_algorithm():
     def _validation(self) -> None:
         validation_rewards = []
         obs_val = self.EnvVal.reset(day=self.EnvVal_firstday)
+
         for j in range(len(self.EnvVal.df.index.unique())):
-            val_actions, val_value = self.predict(obs_val)
+            # note: scaling is already included in the predict function, see below,
+            # hence we do not need to scale obs before prediction here
+            val_actions, val_value = self.predict(obs_val, env_step_version=self.env_step_version, n_assets=self.assets_dim)
             obs_val, val_rewards, val_done, _ = self.EnvVal.step(val_actions)
+            # append validation rewards to list
             validation_rewards.append(val_rewards)
             if val_done:
                 break
@@ -537,12 +545,15 @@ class PPO_algorithm():
         self.logger.info(f"validation total reward: {np.mean(validation_rewards)}")
         return None # Note: rewards are already saved to csv by the validation env
 
-    def predict(self, new_obs):
+    def predict(self, new_obs, env_step_version, n_assets):
+        # new observations need to be scaled as well, because they come from the environment "raw"
+        new_obs = self.scale_observations(obs=new_obs, env_step_version=env_step_version, n_assets=n_assets)
+        # after that, we need to convert the observation to a torch tensor for the network
         new_obs = torch.as_tensor(new_obs, dtype=torch.float)
         # without gradient calculation (no backward pass, only forward)
         # (this needs to be specified in pytorch, different than for tensorflow normally)
         with torch.no_grad():
-            actions, value = self.Brain.predict(new_obs)
+            actions, value = self.Brain.predict(new_obs, deterministic=False)
         # Convert actions and value to numpy array
         actions = actions.detach().numpy()
         value = value.detach().numpy()
@@ -551,4 +562,37 @@ class PPO_algorithm():
     def save(self, model_save_path):
         torch.save(self.Brain.state_dict(), model_save_path)
 
+    def scale_observations(self, obs, env_step_version, n_assets):
+        # Note depending on the step version we use (see config), we use slightly different inputs
+        # and therefore we need to apply some scaling to the observations differently
+        # scaling needs to be done before it is used as input data for training or testing,
+        # because the inputs are sometimes on totally different scales, like cash for example and asset prices
+        # vs macd and volatility
 
+        # Note: cash is a relatively large sum, starting from 1'000'000 in the beginning
+        # and as I have observed, it usually goes down over time to something around 20, plus minus
+        # The fact that cash is so large can make learning more slow, but we don't want (cannot) to use batch
+        # normalization because we initially do forward passes one one single state /observation, which can not
+        # be batch-normalized of course. Also, it is practical to have the cash as actual number
+        # here in order to calculate the portfolio return etc. and save it to csv for analysis / debugging
+        # There are multiple versions to do this, but it makes most sense to use the same scaling factor as
+        # for rewards scaling, which is 1e-4
+        if env_step_version == "paper":
+            # then we have cash at the first place, then asset holdings in the next n_asset places, then asset prices and then other,
+            # less problematic features
+            obs[0] = obs[0] * 1e-4
+            # next come n. asset holdings, which normally vary around 0 and 30000, so lets do 1e-3
+            obs[1: n_assets + 1] = obs[1: n_assets + 1] * 1e-3
+            # for asset prices, which are the next n_assets number of entries,
+            # they are usually between 0+ and 100, we can scale wiht 1e-2
+            # asset prices are also not normalized in the env, because they are practical to use for calculating how
+            # many stocks we can buy
+            obs[n_assets+1: n_assets+n_assets+1] = obs[n_assets+1: n_assets+n_assets+1] * 1e-2
+        elif env_step_version == "newNoShort":
+            # in this case, we already have cash weight instead of cash and asset weights instead of asset holdings
+            # we only need to scale the asset prices which are there as well
+            obs[n_assets+1: n_assets+n_assets+1] = obs[n_assets+1: n_assets+n_assets+1] * 1e-2
+        else:
+            print("Error: env_step_version not specified correctly.")
+
+        return obs

@@ -32,6 +32,18 @@ def get_environment(df: pd.DataFrame,
                     initial: bool,  # for validation, we always have an "initial state"
                     results_dir: str,
                     reset_counter: int,
+                    # env and agent parameters
+                    strategy_mode: str,
+                    features_list: list,
+                    single_features_list: list,
+                    env_step_version: str,
+                    rebalance_penalty: float,
+                    hmax_normalize: int,
+                    initial_cash_balance: int,
+                    transaction_fee: float,
+                    reward_scaling: float,
+                    price_column_name: str,
+                    reward_measure: str,
                     logger=None,
                     previous_state: list = [],  # only applies if RETRAIN = False and/or if its the test env
                     previous_asset_price: list = [],
@@ -39,57 +51,66 @@ def get_environment(df: pd.DataFrame,
                     calculate_sharpe_ratio: bool=False,
                     ) -> gym.Env:
 
-    if settings.STRATEGY_MODE == "ppo":
+    if strategy_mode == "ppo": # todo: rm
         # ppo from stable baselines returns an error when not used with the vec environment; however, since we only pass one env,
         # it doesn't actually make a difference (for games and complex problems, ppo is often used with parallel threads, but I did not
         # implement parallel workers for my work
         env = DummyVecEnv([lambda: FinancialMarketEnv(df=df,
-                                                      features_list=data_settings.FEATURES_LIST,
+                                                      features_list=features_list,
                                                       day=day,
                                                       iteration=iteration,
                                                       # only used for logger.info
-                                                      model_name=settings.STRATEGY_MODE,
+                                                      model_name=strategy_mode,
                                                       mode=mode,
-                                                      hmax_normalize=env_params.HMAX_NORMALIZE,
-                                                      initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
-                                                      transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
-                                                      reward_scaling=env_params.REWARD_SCALING,
+                                                      hmax_normalize=hmax_normalize,
+                                                      initial_cash_balance=initial_cash_balance,
+                                                      transaction_fee_percent=transaction_fee,
+                                                      reward_scaling=reward_scaling,
                                                       assets_dim=assets_dim,
                                                       shape_observation_space=shape_observation_space,
                                                       initial=initial,
                                                       # for validation, we always have an "initial state"
                                                       previous_state=previous_state,
                                                       previous_asset_price=previous_asset_price,
-                                                      price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                                      price_colname=price_column_name,
                                                       results_dir=results_dir,
                                                       reset_counter=reset_counter,
                                                       logger=logger,
                                                       save_results=save_results,
-                                                      calculate_sharpe_ratio=calculate_sharpe_ratio)])
+                                                      calculate_sharpe_ratio=calculate_sharpe_ratio,
+                                                      rebalance_penalty=rebalance_penalty,
+                                                      reward_measure=reward_measure,
+                                                      step_version="paper")])
     elif settings.STRATEGY_MODE == "ppoCustomBase":
         env = FinancialMarketEnv(df=df,
-                                 features_list=data_settings.FEATURES_LIST,
+                                 features_list=features_list,
+                                 single_features_list=single_features_list,
                                  day=day,
                                  iteration=iteration,
                                  # only used for logger.info
-                                 model_name=settings.STRATEGY_MODE,
+                                 model_name=strategy_mode,
                                  mode=mode,
-                                 hmax_normalize=env_params.HMAX_NORMALIZE,
-                                 initial_cash_balance=env_params.INITIAL_CASH_BALANCE,
-                                 transaction_fee_percent=env_params.TRANSACTION_FEE_PERCENT,
-                                 reward_scaling=env_params.REWARD_SCALING,
+                                 hmax_normalize=hmax_normalize,
+                                 initial_cash_balance=initial_cash_balance,
+                                 transaction_fee_percent=transaction_fee,
+                                 reward_scaling=reward_scaling,
                                  assets_dim=assets_dim,
                                  shape_observation_space=shape_observation_space,
                                  initial=initial,
                                  # for validation, we always have an "initial state"
                                  previous_state=previous_state,
                                  previous_asset_price=previous_asset_price,
-                                 price_colname=data_settings.MAIN_PRICE_COLUMN,
+                                 price_colname=price_column_name,
                                  results_dir=results_dir,
                                  reset_counter=reset_counter,
                                  logger=logger,
                                  save_results=save_results,
-                                 calculate_sharpe_ratio=calculate_sharpe_ratio)
+                                 calculate_sharpe_ratio=calculate_sharpe_ratio,
+                                 performance_calculation_window=7,
+                                 step_version=env_step_version,
+                                 rebalance_penalty=rebalance_penalty,
+                                 reward_measure=reward_measure
+                                 )
     else:
         print("ERROR - no valid strategy mode passed. cannot create instance env_train.")
     return env
@@ -99,23 +120,30 @@ def get_model(train_environment,
               number_train_data_points: int,
               shape_observation_space: int,
               assets_dim: int,
-              strategy_mode: str=settings.STRATEGY_MODE,
+              strategy_mode: str,
+              env_step_version: str = "",
               validation_environment=None,
-              train_env_firstday: int=0,
+              train_env_firstday: int= 0,
               val_env_firstday: int=0,
               load_trained_model: bool=False,
               trained_model_save_path: str=None,
               current_episode_number: int=None,
               performance_save_path=None,
               logger=None,
-              # parameter only actove for hp tuning
               now_hptuning=False,
               use_tuned_params=False,
               gamma=None,
               gae_lambda=None,
               clip_epsilon=None,
               critic_loss_coef=None,
-              entropy_loss_coef=None
+              entropy_loss_coef=None,
+              net_version=None,
+              optimizer=None,
+              optimizer_learning_rate=None,
+              max_gradient_norm=None,
+              total_timesteps_to_collect=None,
+              num_epochs=None,
+              batch_size=None,
               ):
 
     if strategy_mode == "ppoCustomBase":
@@ -127,24 +155,26 @@ def get_model(train_environment,
                                  observations_size=shape_observation_space,
                                  # size of observations AFTER going through the env; the env also adds positions for n. asset holdings
                                  actions_num=assets_dim,
-                                 version=agent_params.ppoCustomBase.NET_VERSION,
-                                 optimizer=agent_params.ppoCustomBase.OPTIMIZER,
-                                 learning_rate=agent_params.ppoCustomBase.OPTIMIZER_LEARNING_RATE,
+                                 version=net_version,
+                                 env_step_version=env_step_version,
+                                 optimizer=optimizer,
+                                 learning_rate=optimizer_learning_rate,
                                  )
-        logger.info("initialized -Brain- parameters: ")
-        for param in brain.parameters():
-            logger.info(param)
-
         if load_trained_model and current_episode_number > 1:
             # loading trained model to brain
+            logger.info("loading saved model from train_model_save_path.")
             brain.load_state_dict(torch.load(trained_model_save_path))
+
+        logger.info("initialized  /loaded -Brain- parameters: ")
+        #for param in brain.parameters():
+        #    logger.info(param)
         # NOTE: the buffer size is the number of available training points (because these we want to store)
         # but we also want to update the model in mini batches, e..g of size 84 (by default),
         # and then the buffer size should b a multiple of the batch size because otherwise the last data batch,
         # which is not as long as batch:size, would be ignored.
-        # instead, the last batch is just joing to have some zero padding at the end so that it will stil be of the same length
-        buffer_size = max(number_train_data_points,
-                          math.ceil(number_train_data_points / agent_params.ppoCustomBase.BATCH_SIZE) * agent_params.ppoCustomBase.BATCH_SIZE)
+        # instead, the last batch is just going to have some zero padding at the end so that it will still be of the same length
+        #buffer_size = max(number_train_data_points, math.ceil(number_train_data_points / batch_size) * batch_size)
+        buffer_size=number_train_data_points
         logger.info(f"buffer size:  {buffer_size}")
         logger.info(f"number of train data points passed: {number_train_data_points}")
         buffer = OnPolicyBuffer(buffer_size=buffer_size,
@@ -161,11 +191,11 @@ def get_model(train_environment,
             critic_loss_coef = critic_loss_coef
             entropy_loss_coef = entropy_loss_coef
         else:
-            gamma = agent_params.ppoCustomBase.GAMMA
-            gae_lambda = agent_params.ppoCustomBase.GAE_LAMBDA
-            clip_epsilon = agent_params.ppoCustomBase.CLIP_EPSILON
-            critic_loss_coef = agent_params.ppoCustomBase.CRITIC_LOSS_COEF
-            entropy_loss_coef = agent_params.ppoCustomBase.ENTROPY_LOSS_COEF
+            gamma = gamma
+            gae_lambda = gae_lambda
+            clip_epsilon = clip_epsilon
+            critic_loss_coef = critic_loss_coef
+            entropy_loss_coef = entropy_loss_coef
             logger.info("CHECK parameters")
             logger.info(f"GAMMA             : {gamma}"
                         f"GAE_LAMBDA        : {gae_lambda}"
@@ -177,22 +207,25 @@ def get_model(train_environment,
                               env_validation=validation_environment,
                               brain=brain,
                               buffer=buffer,
-                              batch_size=agent_params.ppoCustomBase.BATCH_SIZE, # note: batch size is changed if train data is < batch_size
-                              num_epochs=agent_params.ppoCustomBase.NUM_EPOCHS,
+                              batch_size=batch_size, # note: batch size is changed if train data is < batch_size
+                              num_epochs=num_epochs,
                               gamma=gamma,
                               gae_lambda=gae_lambda,
                               clip_epsilon=clip_epsilon,
-                              max_kl_value=agent_params.ppoCustomBase.MAX_KL_VALUE,
                               critic_loss_coef=critic_loss_coef,
                               entropy_loss_coef=entropy_loss_coef,
-                              max_gradient_normalization=agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION,
-                              total_timesteps_to_collect=agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT,
+                              max_gradient_normalization=max_gradient_norm,
+                              total_timesteps_to_collect=total_timesteps_to_collect,
                               performance_save_path=performance_save_path,
                               current_episode=current_episode_number,
                               train_env_firstday=train_env_firstday,
                               val_env_firstday=val_env_firstday,
-                              logger=logger)
-    elif strategy_mode == "ppo":
+                              logger=logger,
+                              env_step_version=env_step_version,
+                              assets_dim=assets_dim
+                              )
+
+    elif strategy_mode == "ppo": # todo: rm
         if load_trained_model and current_episode_number > 1:
             model = PPO.load(trained_model_save_path)
             model.set_env(train_environment)
@@ -242,7 +275,7 @@ def get_model(train_environment,
                         _init_setup_model=agent_params.ppo.INIT_SETUP_MODEL)
     return model
 
-def hyperparameter_tuning(train_data: pd.DataFrame,
+def hyperparameter_tuning(train_data: pd.DataFrame, # todo: rm
                           assets_dim: int,
                           shape_observation_space: int,
                           results_dir: str,

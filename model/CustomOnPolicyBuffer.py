@@ -1,11 +1,12 @@
 import numpy as np
 import math
+import torch
 
 # import own libraries
-try:
-    from config.config import *
-except:
-    from config import *
+#try:
+#    from config.config import *
+#except:
+#    from config import *
 
 ########################################################################
 # CUSTOM ON POLICY ALGORITHM                                           #
@@ -14,14 +15,14 @@ except:
 class OnPolicyBuffer():
     """
     This class does the following:
-      - store trajectories and the coresponding metrics collected by the agent:
+      - store trajectories and the corresponding metrics collected by the agent:
         observations, actions (from forward pass on actor/policy network),
         log probabilities of actions, rewards, dones,
         value estimates (from forward pass on critic/value estinator network),
         calculated rewards-to-go,
         calculated advantage estimates
       - converts stored lists /arrays to tensorflow tensors
-      - smaples batches of data and returns them to the agent
+      - samples batches of data and returns them to the agent
     """
 
     def __init__(self,
@@ -29,16 +30,13 @@ class OnPolicyBuffer():
                  obs_shape, # must be tuple (observations,)
                  actions_number: int,
                  hidden_shape=None):
-        self.buffer_size = buffer_size  # HERE, in my implementation, buffer size ALWAYS = length of the data set
+        self.buffer_size = buffer_size  # buffer size ALWAYS = length of the data set here
         self.obs_shape = obs_shape  # Tuple[int, int]
-        self.hidden_shape = hidden_shape
         self.actions_number = actions_number
 
         # observations come in as numerical list / array per step
         self.obs = np.zeros((self.buffer_size,) + self.obs_shape, dtype=np.float32)
-        if self.hidden_shape != None:
-            self.hidden_state = np.zeros((self.buffer_size,) + self.hidden_shape, dtype=np.float32)
-            # actions come in as tensor (estimation of actor) per step
+        # actions come in as tensor (estimation of actor) per step
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         # actions log probabilities come in as list / array per step
@@ -66,8 +64,6 @@ class OnPolicyBuffer():
                                      "value_estimates": self.value_estimates,
                                      "advantage_estimates": self.advantage_estimates,
                                      "returns": self.returns})
-        if self.hidden_shape != None:
-            self.trajectory_dict.update({"hidden_state": self.hidden_state})
 
     def add(self, object_to_add, key_name, position=0):
         """
@@ -210,9 +206,6 @@ class OnPolicyBuffer():
         """
         # observations come in as numerical list / array per step
         self.obs = np.zeros((self.buffer_size,) + self.obs_shape, dtype=np.float32)
-        if self.hidden_shape != None:
-            self.hidden_state = np.zeros((self.buffer_size,) + self.hidden_shape, dtype=np.float32)
-            # actions come in as tensor (estimation of actor) per step
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         # actions log probabilities come in as list / array per step
@@ -239,7 +232,5 @@ class OnPolicyBuffer():
                                      "value_estimates": self.value_estimates,
                                      "advantage_estimates": self.advantage_estimates,
                                      "returns": self.returns})
-        if self.hidden_shape != None:
-            self.trajectory_dict.update({"hidden_state": self.hidden_state})
 
 

@@ -18,17 +18,17 @@ class settings:
     """
     # ---------------SET MANUALLY---------------
     # dataset used:
-    DATASET = "US_stocks_WDB_full"
+    DATASET = "US_stocks_WDB_full" #"done_data"
     #DATASET = "JP_stocks_WDB"$
 
     ### strategy mode to be run
     #STRATEGY_MODE = "ppo"
     STRATEGY_MODE = "ppoCustomBase"
 
-    #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
+    REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
     #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure
-    REWARD_MEASURE = "semvarPenalty"
+    #REWARD_MEASURE = "semvarPenalty"
 
     RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
     #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
@@ -36,7 +36,7 @@ class settings:
     ### Set dates
     # train
     STARTDATE_TRAIN = 20090101 #20141001 #20090102  # Note: this is also the "global startdate"
-    ENDDATE_TRAIN = 20151231   #20151001
+    ENDDATE_TRAIN = 20151001
     # validation (only needed for get_data_params in preprocessing)
     #STARTDATE_VALIDATION = 20160101 #20151001
     #ENDDATE_VALIDATION = #20200707
@@ -105,27 +105,32 @@ class data_settings:
     ### PROVIDE NAMES OF ALL FEATURES / INDICATORS GIVEN DATASET COLUMN NAMES
     PRICE_FEATURES = [MAIN_PRICE_COLUMN]
     RETURNS_FEATURES = ["log_return_daily"] # log returns because they are a bit less "extreme" when they are larger and since we have daily returns this could be practical
-    TECH_INDICATORS = ["macd", "rsi_21", "cci_21", "dx_21", "obv"] # technical indicators for momentum, obv instead of raw "volume"
-    RISK_INDICATORS = ["ret_vola_21d", "vixDiv100"] # 21 days volatility and daily vix (divide by 100)
+    TECH_INDICATORS = ["macd", "rsi_21", "cci_21", "dx_21"]#, "obv"] # technical indicators for momentum, obv instead of raw "volume"
+    RISK_INDICATORS = ["ret_vola_21d"] # 21 days volatility and daily vix (divide by 100)
+
+    SINGLE_FEATURES = ["vixDiv100"] # not attached to a certain asset
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm3"
+    FEATURES_MODE = "fm1"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES
+        SINGLE_FEATURES_LIST = []
     elif FEATURES_MODE == "fm2":
-        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS #+ RETURNS_FEATURES
+        SINGLE_FEATURES_LIST = []
     elif FEATURES_MODE == "fm3":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
+        SINGLE_FEATURES_LIST = SINGLE_FEATURES
     elif FEATURES_MODE == "fm4":
         pass
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    #STEP_VERSION = "paper" # deprecated, only use if you want to use the method from the ensemble paper
-    STEP_VERSION = "newNoShort"
+    STEP_VERSION = "paper"
+    #STEP_VERSION = "newNoShort"
 
     # ---------------LEAVE---------------
     if STEP_VERSION == "newNoShort":
@@ -255,29 +260,26 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        #NET_VERSION = "base1"
-        NET_VERSION = "base2"
-        #NET_VERSION = "LSTM1"
-        #NET_VERSION = "LSTM2"
+        NET_VERSION = "base1"
+        #NET_VERSION = "base2"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
         NUM_EPOCHS = 10
         OPTIMIZER = torch.optim.Adam
-        OPTIMIZER_LEARNING_RATE = 0.00025
+        OPTIMIZER_LEARNING_RATE = 0.001 #0.00025
         GAMMA = 0.99
         GAE_LAMBDA = 0.95
-        CLIP_EPSILON = 0.1#0.5#0.2
+        CLIP_EPSILON = 0.2 #0.5#0.2
         CRITIC_LOSS_COEF = 0.5
-        ENTROPY_LOSS_COEF = 0.1 #0.01
+        ENTROPY_LOSS_COEF = 0.01 #0.01
         MAX_GRADIENT_NORMALIZATION = 0.5
-        MAX_KL_VALUE = None
+        MAX_KL_VALUE = None # not implemented
 
         ### LEARNING PARAMETERS
         TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
         #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
-        TOTAL_EPISODES_TO_TRAIN = 30 #10
-
+        TOTAL_EPISODES_TO_TRAIN = 35 #10 # for initial training, later a little bit less if retrain==True)
 
 class paths:
     # ---------------LEAVE---------------
@@ -310,15 +312,16 @@ class paths:
                        }
 
     # ---------------LEAVE---------------
-    PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{data_settings.COUNTRY}_stocks_"
-                                                                  f"{data_settings.DATABASE}.csv")
+    PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{settings.DATASET}.csv")
 
 class hptuning_config:
+    # if you want to tune hyperparameter before the run (takes many hours)
     #now_hptuning = True
     now_hptuning = False
 
+    # if you only want to tune hyperparameters for the current setting and not run the whole train / test setup as well
     only_hptuning = False
-    #only_hptuning = True # if you only want to tune hyperparameters for the current setting and not run the whole train / test setup as well
+    #only_hptuning = True
 
     # https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
     GAMMA_LIST = [0.8, 0.99]
