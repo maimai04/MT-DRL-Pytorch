@@ -72,6 +72,7 @@ class PPO_algorithm():
                  # path where loss curves etc. are saved
                  performance_save_path: str = None,
                  env_step_version: str = "paper",
+                 lstm_features = False
                  ):
         """
         Here, the variables and hyperparameters are initialized.
@@ -110,6 +111,8 @@ class PPO_algorithm():
         self.performance_save_path = performance_save_path
         self.current_episode = current_episode
 
+        self.lstm_features = lstm_features
+
     def _collect_experiences_to_buffer(self, total_timesteps_to_collect):
         """
         When this function is called, the ppo agent collects experience (trajectories)
@@ -130,8 +133,25 @@ class PPO_algorithm():
 
         # get first observation from training environment
         obs = self.Env.reset(day=self.Env_firstday)#, initial=True)
-        print("obs: ")
-        print(obs)
+        if self.lstm_features == True:
+            # we are only using asset returns and the volatility index as input to the lstm
+            # asset returns are located: just after the asset prices, which are coming after the asset holdings and after the cash position
+            # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings / weights, 1+asset_dim:1+asset_dim+asset_dim = prices,
+            # 1+asset_dim+asset_dim:1+asset_dim+asset_dim+asset_dim = returns
+            lstm_obs = obs[1 + asset_dim + asset_dim : 1 + asset_dim + asset_dim + asset_dim]
+            # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+            lstm_obs = lstm_obs + obs[-1]
+            print("lstm obs: ")
+            print("length")
+            print(len(lstm_obs))
+            print(lstm_obs)
+            # finally, we need to initialize a hidden state in a certain shape, let's call it lstm_state
+            lstm_state  = [] # todo
+        else:
+            lstm_obs = None
+            lstm_state = None
+
+
         # scale the observation (see documentation at the bottom for function "scale_observations"
         obs = self.scale_observations(obs=obs, env_step_version=self.env_step_version, n_assets=self.assets_dim)
         print("scaled_obs: ")
@@ -165,7 +185,9 @@ class PPO_algorithm():
                 obs = torch.as_tensor(obs, dtype=torch.float)
                 # get value estimate, sampled action and actions log probabilities from brain,
                 # which uses actor and critic architecture
-                V_estimate, actions, actions_log_prob, _, _, stdev = self.Brain.forward_pass(observation=obs)
+                V_estimate, actions, actions_log_prob, _, _, stdev = self.Brain.forward_pass(observation=obs,
+                                                                                             lstm_obs=lstm_obs,
+                                                                                             lstm_state=lstm_state)
                 # Note: this yields a
                 # value estimate for the current observation (state) => one value, as tensor of dim (1,)
                 # actions for the current obs (state), e.g. one weight for each stock, as tensor of dim (n_assets,)

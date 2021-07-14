@@ -19,15 +19,15 @@ class settings:
     # ---------------SET MANUALLY---------------
     # dataset used:
     DATASET = "US_stocks_WDB_full" #"done_data"
-    #DATASET = "JP_stocks_WDB"$
+    #DATASET = "JP_stocks_WDB" # todo: rm
 
     ### strategy mode to be run
-    #STRATEGY_MODE = "ppo"
+    #STRATEGY_MODE = "ppo" # todo: rm
     STRATEGY_MODE = "ppoCustomBase"
 
-    REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a eward
-    #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
-    #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure
+    #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
+    REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
+    #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
     #REWARD_MEASURE = "semvarPenalty"
 
     RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
@@ -104,24 +104,23 @@ class data_settings:
 
     ### PROVIDE NAMES OF ALL FEATURES / INDICATORS GIVEN DATASET COLUMN NAMES
     PRICE_FEATURES = [MAIN_PRICE_COLUMN]
-    RETURNS_FEATURES = ["log_return_daily"] # log returns because they are a bit less "extreme" when they are larger and since we have daily returns this could be practical
     TECH_INDICATORS = ["macd", "rsi_21", "cci_21", "dx_21"]#, "obv"] # technical indicators for momentum, obv instead of raw "volume"
+    RETURNS_FEATURES = ["log_return_daily"] # log returns because they are a bit less "extreme" when they are larger and since we have daily returns this could be practical
     RISK_INDICATORS = ["ret_vola_21d"] # 21 days volatility and daily vix (divide by 100)
-
     SINGLE_FEATURES = ["vixDiv100"] # not attached to a certain asset
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm1"
+    FEATURES_MODE = "fm3"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES
         SINGLE_FEATURES_LIST = []
-    elif FEATURES_MODE == "fm2":
+    elif FEATURES_MODE == "fm2": # features version of the ensemble paper
         FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS #+ RETURNS_FEATURES
         SINGLE_FEATURES_LIST = []
     elif FEATURES_MODE == "fm3":
-        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RETURNS_FEATURES + RISK_INDICATORS
         SINGLE_FEATURES_LIST = SINGLE_FEATURES
     elif FEATURES_MODE == "fm4":
         pass

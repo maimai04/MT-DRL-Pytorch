@@ -25,7 +25,6 @@ class FeatureExtractorNet(nn.Module):
     Input: observations
     Output: intermediate Features
     """
-
     def __init__(self,
                  observations_size: int = None,
                  mid_features_size: int = 64,
@@ -58,6 +57,19 @@ class FeatureExtractorNet(nn.Module):
             )
             # input: observation_dim
             # output: 64
+        if version == "lstm1":
+            self.shared_feature_extractor_mlp = nn.Sequential(
+                nn.Linear(observations_size, hidden_size, bias=True),
+                nn.Tanh(),
+                #nn.Softmax(),
+                #nn.ReLU(), # relu here makes both layers have 0 gradient always, softmax() as well
+                nn.Linear(hidden_size, mid_features_size, bias=True),
+                nn.Tanh(),
+                #nn.ReLU() # note: when I used Relu activation, the agent gradients were always zero for some reason
+            )
+            self.shared_feature_extractor_lstm = nn.LSTM(lstm_observations_size, lstm_hidden_size,
+                                                         lstm_num_layers, batch_first=True)
+
 
     def forward(self, observations):
         """
@@ -65,7 +77,12 @@ class FeatureExtractorNet(nn.Module):
         INPUT: mid_features, the intermediate features we get from the feature extractor
         OUTPUT: the action mean of each action
         """
-        mid_features = self.shared_feature_extractor(observations)
+        if version == "lstm":
+            mid_features_mlp = self.shared_feature_extractor_mlp(observations)
+            mid_features_lstm, lstm_hidden = self.shared_feature_extractor_lstm(lstm_observations)
+            mid_features = [mid_features_mpl, mid_features_lstm]
+        else:
+            mid_features = self.shared_feature_extractor(observations)
         return mid_features
 
 
@@ -231,6 +248,8 @@ class BrainActorCritic(nn.Module):
                  learning_rate: float = 0.001, #0.00025,
                  version: str = "base1",
                  env_step_version: str = "paper",
+                 lstm_state=None,
+                 lstm_obs=None
                  ):
         super(BrainActorCritic, self).__init__()
         self.shared_feature_extractor = FeatureExtractorNet(observations_size=observations_size,
@@ -275,7 +294,7 @@ class BrainActorCritic(nn.Module):
         value = self.critic(mid_features)
         return actions, value
 
-    def forward_pass(self, observation: torch.Tensor, actions=None, evaluation_mode=False):
+    def forward_pass(self, observation: torch.Tensor, actions=None, evaluation_mode=False, lstm_obs=None, lstm_state=None):
         ### FEATURES EXTRACTION
         # get intermediate features from features extractor
         # if features extractor shared between actor and critic, mid_features_actor=mid_features_critic
