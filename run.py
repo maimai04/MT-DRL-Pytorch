@@ -91,7 +91,9 @@ if __name__ == "__main__":
 
     # LEARNING PARAMS
     total_timesteps_to_collect = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT
-    total_episoded_to_train = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN
+    total_episodes_to_train_base = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN_BASE
+    total_episodes_to_train_cont = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN_CNT
+
 
     #### SETUP DIRECTORIES AND LOGGINGS
     ####-------------------------------
@@ -162,8 +164,8 @@ if __name__ == "__main__":
                           critic_loss_coef = critic_loss_coef,
                           entropy_loss_coef = entropy_loss_coef,
                           max_gradient_norm = max_gradient_norm,
-                          total_timesteps_to_collect = total_timesteps_to_collect,
-                          total_episoded_to_train = total_episoded_to_train
+                          total_episodes_to_train_base = total_episodes_to_train_base,
+                          total_episodes_to_train_cont = total_episodes_to_train_cont
                         )
 
 
@@ -279,14 +281,15 @@ if __name__ == "__main__":
                                    clip=clip_epsilon,
                                    critic_loss_coef=critic_loss_coef,
                                    entropy_loss_coef=entropy_loss_coef,
-                                   total_episodes_to_train=total_episoded_to_train,
+                                   total_episodes_to_train_base=total_episodes_to_train_base,
+                                   total_episodes_to_train_cont=total_episodes_to_train_cont,
+
                                    net_version=net_version,
                                    optimizer=optimizer,
                                    optimizer_learning_rate=optimizer_learning_rate,
                                    max_gradient_norm=max_gradient_norm,
                                    price_column_name=price_column_name,
 
-                                   total_timesteps_to_collect=total_timesteps_to_collect,
                                    num_epochs=num_epochs,
                                    batch_size=batch_size,
                                    env_step_version=env_step_version,

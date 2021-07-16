@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from itertools import chain
 import gym
+import torch
 from gym import spaces
 
 # import own libraries
@@ -12,6 +13,8 @@ from gym import spaces
 #    from config.config import *
 #except:
 #    from config import *
+from torch import nn
+
 
 class FinancialMarketEnv(gym.Env):
     """A stock trading environment for OpenAI gym
@@ -227,6 +230,7 @@ class FinancialMarketEnv(gym.Env):
                          "rewards": [self.reward],
                          # reward in first entry is 0 because we can only calculate it after a day has passed (but could be done differnetly, doesn't matter)
                          "policy_actions": [],
+                         "policy_actions_trans": [],
                          "exercised_actions": [],
                          "transaction_cost": [],
                          "number_asset_holdings": [self.current_n_asset_holdings],
@@ -668,6 +672,23 @@ class FinancialMarketEnv(gym.Env):
         ####################################
         #    MAIN CODE FOR STEP FUNCTION   #
         ####################################
+        # save policy actions (actions) to memories dict (these are the actions given by the agent, not th actual actions taken)
+        self.memories["policy_actions"].append(actions)
+        # FIRST: CLIP / TRANSFORM ACTIONS to the range allowed by our objective /resp. the action space
+        # this needs to be done because actions are sampled from a Distribution (here: Gaussian,
+        # but could also use other, like e.g. Beta distribution), and that leads to actions not
+        # necessarily being within the boundaries of the defined action space (note: I am using gym.Box for action space)
+        # clipping is used by most implementations online, including stable baselines
+        if self.step_version == "paper":
+            # clip actions to be between action space limits (in paper [-1,1]
+            actions = np.clip(actions, self.action_space.low, self.action_space.high)
+        elif self.step_version == "newNoShort":
+            # apply softmax again in sampled actions in order to make a vector of target weights
+            # which are all between [0,1] and sum up to one together.
+            actions = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
+        # save the clipped / transformed policy actions
+        self.memories["policy_actions_trans"].append(actions)
+
         # if the sampled day index is larger or equal to the last index available in the data set provided,
         # we have reached the end of the episode.
         # Note: there are many ways to define an end of the episode, like when a certain reward / penalty is reached,
@@ -675,9 +696,6 @@ class FinancialMarketEnv(gym.Env):
         # as if the episode is as long as the training data available, because theoretically it is a continuous problem,
         # where one invests over multiple years, theoretically "with no fixed end"
         self.terminal_state = self.day >= self.df.index.unique()[-1] # :bool
-
-        # save policy actions (actions) to memories dict (these are the actions given by the agent, not th actual actions taken)
-        self.memories["policy_actions"].append(actions)
 
         ##### IF WE ARE IN THE TERMINAL STATE #####
         if self.terminal_state:
@@ -952,6 +970,7 @@ class FinancialMarketEnv(gym.Env):
                              "portfolio_value": [self.initial_cash_balance],
                              "rewards": [self.reward],
                              "policy_actions": [],
+                             "policy_actions_trans": [],
                              "exercised_actions": [],
                              "transaction_cost": [],
                              "number_asset_holdings": [self.current_n_asset_holdings],
@@ -1036,6 +1055,7 @@ class FinancialMarketEnv(gym.Env):
                              "portfolio_value": [starting_portfolio_value],
                              "rewards": [self.reward],
                              "policy_actions": [],
+                             "policy_actions_trans": [],
                              "exercised_actions": [],
                              "transaction_cost": [],
                              "number_asset_holdings": [self.current_n_asset_holdings],

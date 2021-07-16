@@ -12,7 +12,7 @@ import logging
 
 ########################################################################
 # CUSTOM NETWORK ARCHITECTURES FOR:
-#           SHARED FEATURES EXTRACTOR
+#           FEATURES EXTRACTOR
 #           ACTOR NETWORK
 #           CRITIC NETWORK
 ########################################################################
@@ -24,29 +24,47 @@ class FeatureExtractorNet(nn.Module):
     This is the Shared Feature Extractor Net.
     Input: observations
     Output: intermediate Features
+
+    Note: MLP = Multilayer Perceptron
+          LSTM = Long short-term memory
     """
     def __init__(self,
-                 observations_size: int = None,
-                 mid_features_size: int = 64,
+                 observations_size: int = None, # usually n_assets * n_asset_features + 1 (cash) + 1 (vix)
+                 mid_features_size: int = 64, # number of neurons in the mlp layer
                  hidden_size: int = 64,
-                 version: str = "base1"):
+                 version: str = "mlp_separate",
+                 lstm_observations_size: int = None,  # usually n_assets (returns) + 1 (vix)
+                 lstm_hidden_size: int = 64, # number of neurons in the lstm layer
+                 lstm_num_layers: int = 2, # how many lstm layers; is a parameter one can directly pass to the nn.LSTM
+                 ):
         """
         obs_size  : size of the observation space, input dimension
         act_size  : number of actions, will be output dimension of the actor net
         HID_SIZE  : number of neurons
         """
         super(FeatureExtractorNet, self).__init__()
+        self.observations_size = observations_size
+        self.mid_features_size = mid_features_size
+        self.hidden_size = hidden_size
+        self.version = version
+        self.lstm_observations_size = lstm_observations_size
+        self.lstm_hidden_size = lstm_hidden_size
+        self.lstm_num_layers = lstm_num_layers
+
         # define the network which outputs the action_mean
-        if version == "base1" or version == "base2":
-            # vanilla version with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
-            # and both layers shared between actor and critic. Actor and critic then only
-            # have one separate layer each, that s, for the output (actions for actor, value for critic)
-            # this is the base case net architecture because it is the same as used in stable baselines
-            # as a default and then it is easier to compare if my own ppo implementation is correct or not
-            # (performance should be "kind of" in line, although they are using things I did not implement,
-            # such as their own custom learning rate scheduling and probably other things I might not have read about,
-            # because they do not report all small implementation details which might have an impact))
-            self.shared_feature_extractor = nn.Sequential(
+        if version == "mlp_separate" or version == "mlp_shared":
+            print("version = mlp_separate / mlp_shared")
+            # mlp_separate: base version according to paper implementation, NO shared layers between actor and critic
+            # mlp_shared: base version but with shared layers
+                # vanilla version with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
+                # and both layers shared between actor and critic. Actor and critic then only
+                # have one separate layer each, that is, for the output (actions for actor, value for critic)
+                # this is the base case net architecture because it is the same as used in stable baselines
+                # as a default and then it is easier to compare if my own ppo implementation is correct or not
+                # (performance should be "kind of" in line, although they are using things I did not implement,
+                # such as their own custom learning rate scheduling and probably other things I might not have read about,
+                # because they do not report all small implementation details which might have an impact))
+            self.feature_extractor = nn.Sequential(
                 nn.Linear(observations_size, hidden_size, bias=True),
                 nn.Tanh(),
                 #nn.Softmax(),
@@ -55,10 +73,11 @@ class FeatureExtractorNet(nn.Module):
                 nn.Tanh(),
                 #nn.ReLU() # note: when I used Relu activation, the agent gradients were always zero for some reason
             )
-            # input: observation_dim
-            # output: 64
-        if version == "lstm1":
-            self.shared_feature_extractor_mlp = nn.Sequential(
+
+        elif version == "mlplstm_separate": # using mlp as before and adding an lstm for additional lags extraction.
+            print("version = mlplstm_separate")
+            # again, no shared layers between actor and critic
+            self.feature_extractor_mlp = nn.Sequential(
                 nn.Linear(observations_size, hidden_size, bias=True),
                 nn.Tanh(),
                 #nn.Softmax(),
@@ -67,23 +86,75 @@ class FeatureExtractorNet(nn.Module):
                 nn.Tanh(),
                 #nn.ReLU() # note: when I used Relu activation, the agent gradients were always zero for some reason
             )
-            self.shared_feature_extractor_lstm = nn.LSTM(lstm_observations_size, lstm_hidden_size,
-                                                         lstm_num_layers, batch_first=True)
+            # add LSTM module
+            # lstm in pytorch: https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html
+            # see also tutorial: https://pytorch.org/tutorials/beginner/nlp/sequence_models_tutorial.html
+            # input_size = number of features, hidden_size = number of features in hidden state h, num_layers = number of LSTM layers (stacked LSTM if >1)
+            # biase = True, by default, batch_first = True (False by default);
+            # means that input is provided as (batch_size, sequence_length, n_features(=input_size)
+            self.feature_extractor_lstm = nn.LSTM(input_size=lstm_observations_size, hidden_size=lstm_hidden_size,
+                                                         num_layers=lstm_num_layers, batch_first=True, bias=True)
+            # use a summary layer to bring down the feature space to 64 (since now we have two outputs),
+            # so that the output can be then directly used in the actor resp. critic network. Using Tanh activation
+            self.summary_layer = nn.Sequential(
+                nn.Linear(hidden_dim=mid_features_size+lstm_hidden_size, output_dim=mid_features_size),
+                nn.Tanh()
+            )
+        else:
+            print("Error, no valid version specified.")
 
+    def create_initial_lstm_state(self):
+        # initialize zero hidden states i the beginning
+        # see: https://discuss.pytorch.org/t/initialization-of-first-hidden-state-in-lstm-and-truncated-bptt/58384
+        # shape of hidden state h / cell state c is each: (num_layers, number_timesteps, hidden_size)
+        # e.g. if we have 2 layers (default), a batch of 5 timesteps and hidden_size=64 (default) => shape= (2, 5, 64)
+        # when we do a forward pass or predict on one sample (day) only, we have (2,1,64)
+        initial_lstm_states = (torch.zeros(self.lstm_num_layers, self.observations_size, self.lstm_hidden_size),
+                               torch.zeros(self.lstm_num_layers, self.observations_size, self.lstm_hidden_size))
+        return initial_lstm_states
 
-    def forward(self, observations):
+    def forward(self, observations: torch.Tensor=None, lstm_observations: torch.Tensor=None, lstm_states=None):
         """
         forward pass through actor network (action_mean_net)
         INPUT: mid_features, the intermediate features we get from the feature extractor
         OUTPUT: the action mean of each action
         """
-        if version == "lstm":
-            mid_features_mlp = self.shared_feature_extractor_mlp(observations)
-            mid_features_lstm, lstm_hidden = self.shared_feature_extractor_lstm(lstm_observations)
-            mid_features = [mid_features_mpl, mid_features_lstm]
+        # if length of shape vector is 1 (e.g. shape = 2), then we have a tensor like this: [features],
+        # and we want to make it compatible with concatenation later with the lstm output, so we reshape it to [[features]] (shape = batch_size, n_features)
+        if len(observations.shape) == 1 and self.version == "mlplstm_separate":
+            print("observations in: ")
+            print(observations)
+            observations = observations.reshape(1, self.observations_size)
+            print("observations out: ")
+            print(observations)
+            print(observations.shape)
+        # if we have only mlp, we use simply the mlp feature extractor (actually same as feature_extractor_mlp)
+        if self.version == "mlp_separate" or self.version == "mlp_shared":
+            mid_features = self.feature_extractor(observations)
+        elif self.version == "mlplstm_separate":
+            mid_features_mlp = self.feature_extractor_mlp(observations)
+            # observations for the lstm layer need to be of dim 3, even if it is just one observation for one forward pass
+            # it must be (batchsize, timesteps, features). If we pass only ONE TIME STEP, shape must be: torch.Size([1, 1, lstm_observations_shape])
+            # Note: lstm_states = (h, c) with h= hidden state, c = cell state
+            mid_features_lstm, lstm_states = self.feature_extractor_lstm(lstm_observations=lstm_observations,
+                                                                              lstm_state=lstm_states)
+            mid_features_mlp_reshaped = mid_features_mlp.reshape(len(observations),  self.mid_features_size)
+            mid_features_lstm_reshaped = mid_features_lstm.reshape(len(observations),  self.mid_features_size)
+            mid_features = torch.cat((mid_features_mlp_reshaped, mid_features_lstm_reshaped), dim=1)
+            # now, we use a simple linear in order to bring together the two features down to a smaller size
+            mid_features = self.summary_layer(mid_features)
+            print("mid_features mlp reshaped: ")
+            print(mid_features_mlp_reshaped.shape)
+            print(mid_features_mlp_reshaped)
+            print("mid_features lstm reshaped: ")
+            print(mid_features_lstm_reshaped.shape)
+            print(mid_features_lstm_reshaped)
+            print("mid_features combined: ")
+            print(mid_features.shape)
+            print(mid_features)
         else:
-            mid_features = self.shared_feature_extractor(observations)
-        return mid_features
+            print("Error, no valid version specified.")
+        return mid_features, lstm_states
 
 
 ########## ACTOR NETWORK ONLY
@@ -100,7 +171,7 @@ class ActorNet(nn.Module):
                mid_features_size: int = 64,
                # hidden size in hidden layer, if there is any
                hidden_size: int = 64,
-               version: str = "base1",
+               version: str = "mlp_separate",
                env_step_version: str = "paper",
                ):
     """
@@ -110,14 +181,14 @@ class ActorNet(nn.Module):
     """
     super(ActorNet, self).__init__()
     # define the network which outputs the action_mean
-    if version == "base1":
+    if version == "mlp_separate" or version == "mlp_shared":
       # in the base version, as already discussed in the Feature extractor class,
       # the feature extraction is fully shared between actor and critic.
       # actor hence only consists of one additional layer for the actions
       # we want to get actions = how many stocks to buy (:100)
       self.action_mean_net = nn.Sequential(
           nn.Linear(mid_features_size, actions_num, bias=True),
-          #nn.Tanh(),
+          #nn.Tanh(), # I first used the squashing function but git better results without it, for some reason
           )
       # in case we are using the "newNoShort" version of the step_version (see documentation),
       # we have to add a softmax layer at the end (because we want to get actions = target portfolio weights)
@@ -126,9 +197,10 @@ class ActorNet(nn.Module):
               nn.Linear(mid_features_size, actions_num, bias=True),
               nn.Softmax(),
           )
-    # in the base2 version, the network architecture is a bit larger, there is an additional layer for the actor
+    # todo: rm
+    # in the mlp_shared version, the network architecture is a bit larger, there is an additional layer for the actor
     # beside the layer for action prediction. Therefore, the hidden size is also reduced a little, in order not to overfit
-    elif version == "base2": # an additional layer for the actions net only
+    elif version == "mlp3": # an additional layer for the actions net only
         self.action_mean_net = nn.Sequential(
             nn.Linear(mid_features_size, hidden_size-32, bias=True),
             nn.Tanh(),
@@ -142,6 +214,8 @@ class ActorNet(nn.Module):
                 nn.Linear(hidden_size-32, actions_num, bias=True),
                 nn.Softmax(dim=0),
             )
+    else:
+        print("Error, no valid version specified.")
     # add log stdev as a parameter, initializes as 0 by default
     # Note: this is because log(std) = 0 means that std = 1, since log(1)=0
     self.log_stdev = nn.Parameter(torch.ones(actions_num)*0)
@@ -165,7 +239,7 @@ class CriticNet(nn.Module):
   def __init__(self,
                mid_features_size: int=64,
                hidden_size: int=64,
-               version: str="base1"):
+               version: str="mlp_separate"):
     """
     mid_features_size  : size of the observation space, input dimension
     hidden_size        : number of neurons
@@ -173,8 +247,8 @@ class CriticNet(nn.Module):
     """
     super(CriticNet, self).__init__()
 
-    if version == "base1":
-      # base1 version is shared feature extractor with actor and critic, and then only
+    if version == "mlp_separate" or version == "mlp_shared":
+      # mlp_separate version is separate feature extractor with actor and critic, and then only
       # one separate layer for critic for value output
       self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
                                       #nn.ReLU(),
@@ -183,15 +257,16 @@ class CriticNet(nn.Module):
                                       #nn.Linear(mid_features_size, 1, bias=True),
                                       nn.Linear(hidden_size, 1, bias=True),
                                       )
-    elif version == "base2":
-          # base2 version adds one more layer for the critic
+    # todo: rm
+    elif version == "mlp3":
+          # mlp_shared version adds one more layer for the critic
           self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
                                          #nn.ReLU(),
                                          nn.Linear(mid_features_size, hidden_size-32, bias=True),
                                          nn.ReLU(),
-                                         nn.Linear(hidden_size-32, 1, bias=True)
-          )
-
+                                         nn.Linear(hidden_size-32, 1, bias=True))
+    else:
+        print("Error, no valid version specified.")
 
   def forward(self, mid_features):
     """
@@ -213,21 +288,31 @@ class CriticNet(nn.Module):
 # weight initialization is important to overcome the problem of exploding / vanishing gradients in very deep
 # neural networks. Since the network here is rather shallow, the way we initialize the weights doesn't have a huge impact.
 # (whether we do Xavier or He or orthogonal s/ orthonormal etc.)
+# what to use?
+# https://jamesmccaffrey.wordpress.com/2020/11/20/the-gain-parameter-for-the-pytorch-xavier_uniform_-and-xavier_normal_-initialization-functions/
 def init_weights_feature_extractor_net(module, gain=np.sqrt(2)):
     if isinstance(module, nn.Linear):
-        nn.init.orthogonal_(module.weight, gain=gain)
+        #nn.init.orthogonal_(module.weight, gain=gain)
+        nn.init.xavier_normal_(module.weight, gain=gain)
+        if module.bias is not None:
+            # fill bias with 0 (if there is a bias, which there always is in my work)
+            module.bias.data.fill_(0.0)
+    if isinstance(module, nn.LSTM):
+        nn.init.xavier_normal_(module.weight, gain=gain)
         if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
 def init_weights_actor_net(module, gain=0.01):
     if isinstance(module, nn.Linear):
-        nn.init.orthogonal_(module.weight, gain=gain)
+        #nn.init.orthogonal_(module.weight, gain=gain)
+        nn.init.xavier_normal_(module.weight, gain=gain)
         if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
 def init_weights_critic_net(module, gain=1.):
     if isinstance(module, nn.Linear):
-        nn.init.orthogonal_(module.weight, gain=gain)
+        #nn.init.orthogonal_(module.weight, gain=gain)
+        nn.init.xavier_normal_(module.weight, gain=gain)
         if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
@@ -237,6 +322,9 @@ class BrainActorCritic(nn.Module):
     def __init__(self,
                  observations_size: int,
                  actions_num: int,
+                 feature_extractor_class=None,
+                 actor_class=None,
+                 critic_class=None,
                  init_weights_feature_extractor_net = init_weights_feature_extractor_net,
                  init_weights_actor_net = init_weights_actor_net,
                  init_weights_critic_net = init_weights_critic_net,
@@ -244,69 +332,145 @@ class BrainActorCritic(nn.Module):
                  hidden_size_actor: int = 64,
                  hidden_size_critic: int = 64,
                  hidden_size_features_extractor: int = 64,
+                 # for lstm, only actually used if verison = mlplstm
+                 lstm_observations_size: int = None,
+                 lstm_hidden_size_feature_extractor: int = 64,
+                 lstm_num_layers: int = 2, #default is 2 because that worked well
+                 # optimizer
                  optimizer: torch.optim = torch.optim.Adam,
                  learning_rate: float = 0.001, #0.00025,
-                 version: str = "base1",
+                 # versions
+                 version: str = "mlp_separate",
                  env_step_version: str = "paper",
-                 lstm_state=None,
-                 lstm_obs=None
                  ):
         super(BrainActorCritic, self).__init__()
-        self.shared_feature_extractor = FeatureExtractorNet(observations_size=observations_size,
-                                                            mid_features_size=mid_features_size,
-                                                            hidden_size=hidden_size_features_extractor,
-                                                            version=version)
-        self.actor = ActorNet(actions_num=actions_num,
+        self.version = version
+
+        if version == "mlp_shared": # shared feature extractor between actor and critic
+            self.feature_extractor = feature_extractor_class(observations_size=observations_size,#FeatureExtractorNet
+                                                         mid_features_size=mid_features_size,
+                                                         hidden_size=hidden_size_features_extractor,
+                                                         version=version,
+                                                         # if we have version == mlplstm, else these will be ignored
+                                                         lstm_hidden_size=lstm_hidden_size_feature_extractor,
+                                                         lstm_observations_size=lstm_observations_size,
+                                                         lstm_num_layers=lstm_num_layers)
+            # initialize weights for feature extractor
+            self.init_weights_feature_extractor_net = init_weights_feature_extractor_net
+            self.feature_extractor.apply(self.init_weights_feature_extractor_net)
+        elif version == "mlp_separate" or version == "mlplstm_separate": # separate layers between actor and critic
+            self.feature_extractor_actor = FeatureExtractorNet(observations_size=observations_size,
+                                                               mid_features_size=mid_features_size,
+                                                               hidden_size=hidden_size_features_extractor,
+                                                               version=version,
+                                                               # if we have verison == mlplstm, else these will be ignored
+                                                               lstm_hidden_size=lstm_hidden_size_feature_extractor,
+                                                               lstm_observations_size=lstm_observations_size,
+                                                               lstm_num_layers=lstm_num_layers
+                                                               )
+            self.feature_extractor_critic = FeatureExtractorNet(observations_size=observations_size,
+                                                               mid_features_size=mid_features_size,
+                                                               hidden_size=hidden_size_features_extractor,
+                                                               version=version,
+                                                               # if we have verison == mlplstm, else these willmbe ignored
+                                                               lstm_hidden_size=lstm_hidden_size_feature_extractor,
+                                                               lstm_observations_size=lstm_observations_size,
+                                                               lstm_num_layers=lstm_num_layers
+                                                               )
+            # initialize weights for both feature extractor nets separately
+            self.init_weights_feature_extractor_net = init_weights_feature_extractor_net
+            self.feature_extractor_actor.apply(self.init_weights_feature_extractor_net)
+            self.feature_extractor_critic.apply(self.init_weights_feature_extractor_net)
+        else:
+            print("Error, no valid version specified.")
+
+        self.actor = actor_class(actions_num=actions_num,
                               mid_features_size=mid_features_size,
                               hidden_size=hidden_size_actor,
                               version=version,
                               env_step_version=env_step_version)
 
-        self.critic = CriticNet(mid_features_size=mid_features_size,
+        self.critic = critic_class(mid_features_size=mid_features_size,
                                 hidden_size=hidden_size_critic,
                                 version=version)
 
-        #initialize orthogonal weights
-        self.init_weights_feature_extractor_net = init_weights_feature_extractor_net
+        #initialize weights for actor and critic
         self.init_weights_actor_net = init_weights_actor_net
         self.init_weights_critic_net = init_weights_critic_net
-
-        self.shared_feature_extractor.apply(self.init_weights_feature_extractor_net)
         self.actor.apply(self.init_weights_actor_net)
         self.critic.apply(self.init_weights_critic_net)
 
         # Setup optimizer with learning rate
         self.learning_rate = learning_rate
         self.optimizer = optimizer
-        # for Adam, apply optimizer to all the parameters in all the three networks
-        self.optimizer = self.optimizer(list(self.shared_feature_extractor.parameters()) +
-                                        list(self.actor.parameters()) +
-                                        list(self.critic.parameters()),
-                                        lr=learning_rate, # 0.001 by default
-                                        eps=1e-08, # by default
-                                        betas=(0.9, 0.999), # by default
-                                        weight_decay=0 # L2 penalty, float, 0 by default
-                                        )
 
-    def forward(self, observations):
-        mid_features = self.shared_feature_extractor(observations)
-        actions = self.actor(mid_features)
-        value = self.critic(mid_features)
-        return actions, value
+        if version == "mlp_shared": # shared feature extactor between actor and critic
+            # for Adam, apply optimizer to all the parameters in all the three networks
+            self.optimizer = self.optimizer(list(self.feature_extractor.parameters()) +
+                                            list(self.actor.parameters()) +
+                                            list(self.critic.parameters()),
+                                            lr=learning_rate, # 0.001 by default
+                                            eps=1e-08, # by default
+                                            betas=(0.9, 0.999), # by default
+                                            weight_decay=0 # L2 penalty, float, 0 by default
+                                            )
+        elif version == "mlp_separate" or version == "mlplstm_separate": # separate layers between actor and critic
+            self.optimizer = self.optimizer(list(self.feature_extractor_actor.parameters()) +
+                                            list(self.feature_extractor_critic.parameters()) +
+                                            list(self.actor.parameters()) +
+                                            list(self.critic.parameters()),
+                                            lr=learning_rate, # 0.001 by default
+                                            eps=1e-08, # by default
+                                            betas=(0.9, 0.999), # by default
+                                            weight_decay=0 # L2 penalty, float, 0 by default
+                                            )
+        else:
+            print("Error, no valid version specified.")
 
-    def forward_pass(self, observation: torch.Tensor, actions=None, evaluation_mode=False, lstm_obs=None, lstm_state=None):
+    def forward(self, observations, lstm_observations=None, lstm_states_actor=None, lstm_states_critic=None):
+        if self.version == "mlp_shared": # shared feature extactor between actor and critic
+            mid_features = self.feature_extractor(observations)
+            actions = self.actor(mid_features)
+            value = self.critic(mid_features)
+        elif self.version == "mlp_separate" or self.version == "mlplstm_separate": # separate layers between actor and critic
+            mid_features_actor, lstm_states_actor = self.feature_extractor_actor(observations=observations,
+                                                              lstm_observations=lstm_observations,
+                                                              lstm_states=lstm_states_actor)
+            mid_features_critic, lstm_states_critic = self.feature_extractor_critic(observations=observations,
+                                                              lstm_observations=lstm_observations,
+                                                              lstm_states=lstm_states_critic)
+            actions = self.actor(mid_features_actor)
+            value = self.critic(mid_features_critic)
+        else: #self, observations: torch.Tensor=None, lstm_observations: torch.Tensor=None, lstm_states=None)
+            print("Error, no valid version specified.")
+        return actions, value, lstm_states_actor, lstm_states_critic
+
+    def forward_pass(self, observations: torch.Tensor, lstm_observations: torch.Tensor = None,
+                     actions=None, lstm_states_actor=None, lstm_states_critic=None, evaluation_mode=False):
         ### FEATURES EXTRACTION
         # get intermediate features from features extractor
-        # if features extractor shared between actor and critic, mid_features_actor=mid_features_critic
-        mid_features = self.shared_feature_extractor(observation)
+        if self.version == "mlp_shared": # shared feature extactor between actor and critic
+            mid_features = self.feature_extractor(observations)
+            ### CRITIC
+            # get value estimate from critic (value network) using these mid_features
+            value_estimate = self.critic(mid_features)
+            ### ACTOR
+            # get estimated action means from actor (policy network) using these mid features
+            action_means = self.actor(mid_features)
+        elif self.version == "mlp_separate" or self.version == "mlplstm_separate": # separate layers between actor and critic
+            mid_features_actor, lstm_state_actor = self.feature_extractor_actor(observations=observations,
+                                                              lstm_observations=lstm_observations,
+                                                              lstm_states=lstm_states_actor)
+            mid_features_critic, lstm_state_critic = self.feature_extractor_critic(observations=observations,
+                                                              lstm_observations=lstm_observations,
+                                                              lstm_states=lstm_states_critic)
+            ### CRITIC
+            # get value estimate from critic (value network) using these mid_features
+            value_estimate = self.critic(mid_features_critic)
+            ### ACTOR
+            # get estimated action means from actor (policy network) using these mid features
+            action_means = self.actor(mid_features_actor)
 
-        ### CRITIC
-        # get value estimate from critic (value network) using these mid_features
-        value_estimate = self.critic(mid_features)
-
-        ### ACTOR
-        # get estimated action means from actor (policy network) using these mid features
-        action_means = self.actor(mid_features)
         #print("agent: action means")
         #print(action_means)
         # get estimated log stdev parameter (like a bias term of the last layer) appended to the actor network
@@ -361,7 +525,7 @@ class BrainActorCritic(nn.Module):
             # (this is good to know for debugging / to check if code works properly)
             return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
 
-        else: # by default,forward pass
+        else: # by default, forward pass
             # here we sample actions from the distribution => non-deterministic, in order to add some exploration
             action_samples = actions_distribution.rsample()
             # Note: rsample() supports gradient calculation through the sampler, in contrast to sample()
@@ -377,9 +541,10 @@ class BrainActorCritic(nn.Module):
                 actions_joint_log_proba = actions_log_probs.sum(dim=1)
             else:
                 actions_joint_log_proba = actions_log_probs.sum()
-            return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution, stdev
+            return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution, stdev, \
+                   lstm_state_actor, lstm_state_critic
 
-    def predict(self, new_obs, deterministic=False):
+    def predict(self, new_obs, new_lstm_obs=None, deterministic=False, lstm_states_actor=None, lstm_states_critic=None):
         # deterministic / non-deterministic:
         # https://datascience.stackexchange.com/questions/56308/why-do-trained-rl-agents-still-display-stochastic-exploratory-behavior-on-test
         # note: it somehow yields better result in testing when sampling (non-deterministic) actions than when I use the mean directly
@@ -391,12 +556,39 @@ class BrainActorCritic(nn.Module):
             pass
         else:
             new_obs = torch.as_tensor(new_obs, dtype=torch.float)
-        # get intermediate features from feature extractor
-        mid_features = self.shared_feature_extractor(new_obs)
-        # get action means from actor
-        action_means = self.actor(mid_features)
-        # get value from critic (usually not needed but for debugging)
-        value = self.critic(mid_features)
+        # change new lstm observation to torch tensor of shape 3D, if it is not already a torch tensor
+        if isinstance(new_lstm_obs, torch.Tensor):
+            if new_lstm_obs.dim() != 3: # we will only p
+                new_lstm_obs.reshape((1, 1, 3)) # reshape to 3D, with (batch number,
+        else:
+            new_obs = torch.as_tensor(new_obs, dtype=torch.float)
+
+        ### FEATURES EXTRACTION
+        # get intermediate features from features extractor
+        if self.version == "mlp_shared":  # shared feature extactor between actor and critic
+            mid_features = self.feature_extractor(new_obs)
+            ### CRITIC
+            # get value estimate from critic (value network) using these mid_features
+            value_estimate = self.critic(mid_features)
+            ### ACTOR
+            # get estimated action means from actor (policy network) using these mid features
+            action_means = self.actor(mid_features)
+        elif self.version == "mlp_separate" or self.version == "mlplstm_separate":  # separate layers between actor and critic
+            mid_features_actor, lstm_state_actor = self.feature_extractor_actor(observations=new_obs,
+                                                                                lstm_observations=new_lstm_obs,
+                                                                                lstm_states=lstm_states_actor)
+            mid_features_critic, lstm_state_critic = self.feature_extractor_critic(observations=new_obs,
+                                                                                lstm_observations=new_lstm_obs,
+                                                                                lstm_states=lstm_states_critic)
+            ### CRITIC
+            # get value estimate from critic (value network) using these mid_features
+            value_estimate = self.critic(mid_features_critic)
+            ### ACTOR
+            # get estimated action means from actor (policy network) using these mid features
+            action_means = self.actor(mid_features_actor)
+        else:
+            print("Error: no valid version specified.")
+
         if deterministic == True:
             # if we predict deterministically, we can just take the action means (most probable action from the distribution)
             predicted_actions = action_means
@@ -409,8 +601,8 @@ class BrainActorCritic(nn.Module):
             actions_distribution = Normal(action_means, stdev_vector)
             action_samples = actions_distribution.rsample()
             predicted_actions = action_samples
-        predicted_value = value
+        predicted_value = value_estimate
         # note: prediction here is deterministic; we take the action means (= the output of the actor network)
         # we could also sample an action from our actor network instead (non-deterministic prediction),
         # but if we predict we normally want to use the most likely prediction of our current model for performance evaluation
-        return predicted_actions, predicted_value
+        return predicted_actions, predicted_value, lstm_state_actor, lstm_state_critic

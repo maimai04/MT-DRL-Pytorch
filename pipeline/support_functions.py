@@ -16,8 +16,7 @@ from config.config import *
 from environment.FinancialMarketEnv import FinancialMarketEnv
 from model.CustomOnPolicyBuffer import OnPolicyBuffer
 from model.CustomPPOAlgorithm import PPO_algorithm
-from model.CustomActorCriticNets import BrainActorCritic, \
-    init_weights_feature_extractor_net, init_weights_actor_net, init_weights_critic_net
+from model.CustomActorCriticNets import *
 
 ########################################################################
 # DEFINE FUNCTION FOR TRAINING                                         #
@@ -159,13 +158,24 @@ def get_model(train_environment,
                                  env_step_version=env_step_version,
                                  optimizer=optimizer,
                                  learning_rate=optimizer_learning_rate,
+                                 lstm_observations_size=assets_dim+1, #hardcoded: number od assets (=number of log returns) + 1 for vix
+                                 lstm_hidden_size_feature_extractor= 64,
+                                 lstm_num_layers=2,
+                                 feature_extractor_class=FeatureExtractorNet,
+                                 actor_class=ActorNet,
+                                 critic_class=CriticNet,
                                  )
         if load_trained_model and current_episode_number > 1:
             # loading trained model to brain
-            logger.info("loading saved model from train_model_save_path.")
+            logger.info("loading saved model from train_model_save_path:")
             brain.load_state_dict(torch.load(trained_model_save_path))
+            for name, param in brain.named_parameters():
+                if param.requires_grad:
+                    logger.info(f"name: {name}")
+                    logger.info(param.grad)
 
-        logger.info("initialized  /loaded -Brain- parameters: ")
+        logger.info("initialized -Brain-: ")
+        logger.info(brain)
         #for param in brain.parameters():
         #    logger.info(param)
         # NOTE: the buffer size is the number of available training points (because these we want to store)
@@ -174,12 +184,13 @@ def get_model(train_environment,
         # which is not as long as batch:size, would be ignored.
         # instead, the last batch is just going to have some zero padding at the end so that it will still be of the same length
         #buffer_size = max(number_train_data_points, math.ceil(number_train_data_points / batch_size) * batch_size)
-        buffer_size=number_train_data_points
+        buffer_size = number_train_data_points
         logger.info(f"buffer size:  {buffer_size}")
         logger.info(f"number of train data points passed: {number_train_data_points}")
         buffer = OnPolicyBuffer(buffer_size=buffer_size,
                                 obs_shape=(shape_observation_space,),
-                                actions_number=assets_dim)
+                                actions_number=assets_dim,
+                                )
         if now_hptuning or use_tuned_params:
             if now_hptuning:
                 logger.info("taking hyperparameters for tuning to model.")

@@ -12,7 +12,7 @@ from config.config import *
 def calculate_performance_measures(run_path: str, # path where the target results are saved for the whole run
                                    # whether the results are calculated for one seed or across all seeds (whole run)
                                    seed: int,
-                                   seeds_list: list, # only needed for level="run"
+                                   seeds_list: list=None, # only needed for level="run"
                                    level="seed", #"run"
                                    mode: str = "test",
                                    logger=None,

@@ -120,7 +120,7 @@ class data_settings:
         FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS #+ RETURNS_FEATURES
         SINGLE_FEATURES_LIST = []
     elif FEATURES_MODE == "fm3":
-        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RETURNS_FEATURES + RISK_INDICATORS
+        FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
         SINGLE_FEATURES_LIST = SINGLE_FEATURES
     elif FEATURES_MODE == "fm4":
         pass
@@ -146,7 +146,7 @@ class env_params:
 
 class agent_params:
     # ---------------SET MANUALLY---------------
-    class ppo: # from stable baselines
+    class ppo: # from stable baselines # todo: rm
         """
         POLICY          : policy network type, can be passed as str (if registered) or as instance,
                           e.g. if custom policy is used
@@ -259,8 +259,9 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        NET_VERSION = "base1"
-        #NET_VERSION = "base2"
+        NET_VERSION = "mlp_separate"
+        #NET_VERSION = "mlp_shared"
+        #NET_VERSION = "mlplstm_separate"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
@@ -273,12 +274,13 @@ class agent_params:
         CRITIC_LOSS_COEF = 0.5
         ENTROPY_LOSS_COEF = 0.01 #0.01
         MAX_GRADIENT_NORMALIZATION = 0.5
-        MAX_KL_VALUE = None # not implemented
+        MAX_KL_VALUE = None # not implemented # todo: rm
 
         ### LEARNING PARAMETERS
         TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
         #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
-        TOTAL_EPISODES_TO_TRAIN = 35 #10 # for initial training, later a little bit less if retrain==True)
+        TOTAL_EPISODES_TO_TRAIN_BASE = 60 #10 # for initial training, later a little bit less if retrain==True)
+        TOTAL_EPISODES_TO_TRAIN_CNT = TOTAL_EPISODES_TO_TRAIN_BASE-20
 
 class paths:
     # ---------------LEAVE---------------
@@ -296,6 +298,7 @@ class paths:
                        "portfolio_value": "portfolio_value",
                        "rewards": "rewards",
                        "policy_actions": "policy_actions",
+                       "policy_actions_trans": "policy_actions_trans",
                        "exercised_actions": "exercised_actions",
                        "asset_equity_weights": "asset_equity_weights",
                        "all_weights_cashAtEnd": "all_weights_cashAtEnd",

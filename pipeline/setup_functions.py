@@ -154,8 +154,8 @@ def config_logging_to_txt(results_subdir,
                           critic_loss_coef,
                           entropy_loss_coef,
                           max_gradient_norm,
-                          total_timesteps_to_collect,
-                          total_episoded_to_train,
+                          total_episodes_to_train_base,
+                          total_episodes_to_train_cont,
                           ) -> None:
     """
     Writes all configurations and related parameters into the config_log.txt file.
@@ -240,8 +240,8 @@ def config_logging_to_txt(results_subdir,
                             f"CRITIC_LOSS_COEF              : {critic_loss_coef}\n"
                             f"ENTROPY_LOSS_COEF             : {entropy_loss_coef}\n"
                             f"MAX_GRADIENT_NORMALIZATION    : {max_gradient_norm}\n"
-                            f"TOTAL_TIMESTEPS_TO_COLLECT    : {total_timesteps_to_collect}\n"
-                            f"TOTAL_TIMESTEPS_TO_TRAIN      : {total_episoded_to_train}\n"
+                            f"TOTAL_TIMESTEPS_TO_COLLECT (Base)    : {total_episodes_to_train_base}\n"
+                            f"TOTAL_TIMESTEPS_TO_COLLECT (Cont)    : {total_episodes_to_train_cont}\n"
                             )
     elif settings.STRATEGY_MODE == "ppo": # todo: rm
         with open(txtfile_path, "a") as text_file:

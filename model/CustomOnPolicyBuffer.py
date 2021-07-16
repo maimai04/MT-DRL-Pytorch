@@ -29,13 +29,22 @@ class OnPolicyBuffer():
                  buffer_size,
                  obs_shape, # must be tuple (observations,)
                  actions_number: int,
-                 hidden_shape=None):
+                 lstm_obs_shape=None,
+                 ):
         self.buffer_size = buffer_size  # buffer size ALWAYS = length of the data set here
         self.obs_shape = obs_shape  # Tuple[int, int]
+        if lstm_obs_shape == None:
+            self.lstm_obs_shape = obs_shape
+
         self.actions_number = actions_number
 
         # observations come in as numerical list / array per step
         self.obs = np.zeros((self.buffer_size,) + self.obs_shape, dtype=np.float32)
+        # lstm observations (only observations which are input to the lstm, such as log returns and vix)
+        self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
+        # hidden states / lstm states to be saved
+        self.lstm_state_actor = np.zeros((self.buffer_size,), dtype=np.float32)
+        self.lstm_state_critic = np.zeros((self.buffer_size,), dtype=np.float32)
         # actions come in as tensor (estimation of actor) per step
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
@@ -63,7 +72,10 @@ class OnPolicyBuffer():
                                      "dones": self.dones,
                                      "value_estimates": self.value_estimates,
                                      "advantage_estimates": self.advantage_estimates,
-                                     "returns": self.returns})
+                                     "returns": self.returns,
+                                     "lstm_obs": self.lstm_obs,
+                                     "lstm_state_actor": self.lstm_state_actor,
+                                     "lstm_state_critic": self.lstm_state_critic})
 
     def add(self, object_to_add, key_name, position=0):
         """
@@ -78,8 +90,9 @@ class OnPolicyBuffer():
         if isinstance(object_to_add, torch.Tensor):
             # note: tf.identity() creates a copy of the tensor, it is the tf equivalent of e.g. np.copy() or pd.copy()
             if key_name == "value_estimates":
-                self.trajectory_dict[key_name][
-                    position] = object_to_add.clone().numpy().flatten()  # flatten should only be applied to values, ont to log_prob
+                self.trajectory_dict[key_name][position] = object_to_add.clone().numpy().flatten()  # flatten should only be applied to values, ont to log_prob
+            elif key_name in ["lstm_state_actor", "lstm_state_critic"]:
+                self.self.trajectory_dict[key_name][position] = object_to_add
             else:
                 self.trajectory_dict[key_name][position] = object_to_add.clone().numpy()
         else:
@@ -94,66 +107,18 @@ class OnPolicyBuffer():
         else:
             return self.trajectory_dict[key_name]
 
-    def train_test_split(self, train_timsteps: int):
-        """
-        Split the sampled trajectory batch in a train and a test subset.
-        """
-        train_trajectory_dict = {}
-        test_trajectory_dict = {}
-        for key in self.trajectory_dict.keys():
-            train_subset = self.trajectory_dict[key][:train_timsteps]
-            test_subset = self.trajectory_dict[key][train_timsteps:]
-            train_trajectory_dict.update({key: train_subset})
-            test_trajectory_dict.update({key: test_subset})
-        return train_trajectory_dict, test_trajectory_dict
-
-    def _make_batches(self, array, batch_size, non_overlapping_unique=True,
-                      random_with_replacement=False): # todo: rm
-        """
-        This function is used to split the whole trajectory batch into minibatches that
-        can then be used to update the networks in minibatches.
-        Note: the last batch is likely smaller than the rest, hence it will be padded with zeroes.
-        """
-        # create batches from data which are non-overlapping and unique
-        # (no replacement = no batch double)
-        if non_overlapping_unique:
-            arr = np.array(array.copy())
-            arr.resize((math.ceil(arr.shape[0] / batch_size), batch_size), refcheck=False)
-            return arr
-        elif random_with_replacement:
-            pass
-
-    def _make_tensor(self, array): # todo: rm
-        """
-        This function converts arrays to tensors, since neural networks need tensors.
-        """
-        arr = np.array(array.copy())
-        arr = torch.as_tensor(array, dtype=torch.float)
-        return arr
-
-    def get_batches(self, key_name, batch_size, dataformat="tensor"): # todo: rm
-        """
-        This function calls the private method _make_batches and returns mini-batched
-        data. If we specified dataformat to be "tensor", it converts the batched data as tensor.
-        """
-        arr = np.array(self.trajectory_dict[key_name]).copy()
-        batched_arr = self._make_batches(array=arr,
-                                         batch_size=batch_size,
-                                         non_overlapping_unique=True,
-                                         random_with_replacement=False)
-        if dataformat == "tensor":
-            batched_arr = self._make_tensor(array=batched_arr)
-        return batched_arr
-
     def calculate_and_store_advantages(self, terminal_V_estimate, gamma, gae_lambda):
         """
+        Calculate the GAE (Generalized Advantage Estimate)
+
         We need to calculate the advantage estimates because they are part of the surrogate loss
         function. If our gae lambda (smoothing factor) =1, then we simply get the "vanilla" version
         of the advantage; A(s)=R-V(s), with R= discounted bootstrapped reward
+        (bootstrapped means that we use estimates to calculate the reward)
         see also: https://towardsdatascience.com/generalized-advantage-estimate-maths-and-code-b5d5bd3ce737
         Note: there are also other ways to calculate the advantage estimate, however the paper uses this GAE
         (generalized advantage estimation) because it is an exponential smoothing of the vanilla version and hence it has lower variance,
-        hich is good.
+        which is good.
         """
         # Take the terminal state value V estimate and convert it to a numpy array (it is an output of the network,
         # hence a tensor. Then we need to flatten it to go from format [V1],[V2],...] to [V1, V2,...]
@@ -165,15 +130,31 @@ class OnPolicyBuffer():
         for t in reversed(range(self.buffer_size)):
             # if we are at the last step in the trajectory, then the delta reduces to
             # reward of (state, action) @t (received at state t+1 but stored in the array at place t) - state value V @t
-            if t == self.buffer_size - 1:  # Note: range starte with 0 and hence the largest and final t will be buffer_size-1
-                not_terminal = 0  # stands for FALSE
+            # Note: "delta" is the TD error (=Temporal Difference) error
+            if t == self.buffer_size - 1:  # Note: range starts counting with 0 and hence the largest and final t will be buffer_size-1
+                not_terminal = 1 #0  # 0 stands for FALSE, so if we are at t==buffersize-1, we ARE in the terminal state and hence not:terminal = False
                 next_state_value = v_terminal  # the next state value is hence the terminal state value
-            # if we are not at the last step of the trajectory: (that means t < buffer_size-1, starting with t=buffer_size-2)
+                # NOTE: at first, I had it "wrong" in the sense that I used not_terminal = 0, because every source I found online about explaining
+                # how to code the GAE and every book always only covered EPISODIC tasks - tasks where a goal is reached /
+                # the game is terminated because the agent dies etc. and the EPISODE ENDS => so it makes sense that the TRUE VALUE in the last state of an
+                # episodic task is, by definition, 0 (since state value = present value of all future rewards).
+                # However, this task in my work is a bit different: even though I call the data trajectories "episodes" (=abuse of language
+                # because I named it like that in the beginning when I didn't know better), my task is a continuing RL problem,
+                # that means that the final value is not really 0 => we don't suddenly loose all the money we have invested and we also don't receive a last,
+                # large reward at the last time step. So basically, the agent here (should) assume(s) that after the trajectory (not really episode) ends,
+                # the data ends but not the task. So therefore I changed the "mask" above to 1 as well, so that we use the final value estimate in order
+                # to calculate the GAE. I haven't rigorously copared performances of algorithm with / vs. without GAE, but I have calculated it on a
+                # mini sample for myself and I can tell you that the GAE is very different depending on whether we use the episodic or non-episodic way of calculation.
+                # If we use episodic (with masking in last state to 0) GAE estimates, we get a more negative view of the return (but the effect diminishes when the
+                # trajectory is long and the because of the discounting AND smoothing with the gae_lambda, the final value estimate doesn't have so much weight actually)
+            # if we are not at the last step of the trajectory anymore: (that means t < buffer_size-1, starting with t=buffer_size-2)
+            # (Note: "anymore", because we always first start at t==buffersize-1, at the end of the trajectory we have)
             else:
-                not_terminal = 1  # stands for TRUE
+                not_terminal = 1  # 1 stands for TRUE
                 # we get the stored state value from the buffer.
                 # now, t<=buffer_size-2, and the value at t+1 = buffersize-2+1 = buffer_size-1 = last value stored in buffer
-                # (note: the terminal value is not stored in the buffer, because we don't need it (nothing comes after it))
+                # (note: the terminal value is not stored in the buffer, because we don't need it for the updates
+                # (nothing comes after it), only for the advantage calculation)
                 next_state_value = self.trajectory_dict["value_estimates"][t + 1]
                 # now that we found out whether the next state is the terminal state or not, and now that we
             # got the value of the next state, we can compute the advantage of the current time point
@@ -195,8 +176,7 @@ class OnPolicyBuffer():
             self.trajectory_dict["advantage_estimates"][t] = next_advantage_value
 
     def calculate_and_store_returns(self):
-        self.trajectory_dict["returns"] = self.trajectory_dict["advantage_estimates"] + self.trajectory_dict[
-            "value_estimates"]
+        self.trajectory_dict["returns"] = self.trajectory_dict["advantage_estimates"] + self.trajectory_dict["value_estimates"]
 
     def reset(self):
         """
@@ -206,6 +186,12 @@ class OnPolicyBuffer():
         """
         # observations come in as numerical list / array per step
         self.obs = np.zeros((self.buffer_size,) + self.obs_shape, dtype=np.float32)
+        # lstm observations (only observations which are input to the lstm, such as log returns and vix)
+        self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
+        # hidden states / lstm states to be saved
+        self.lstm_state_actor = np.zeros((self.buffer_size,), dtype=np.float32)
+        self.lstm_state_critic = np.zeros((self.buffer_size,), dtype=np.float32)
+        # actions
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         # actions log probabilities come in as list / array per step
@@ -231,6 +217,9 @@ class OnPolicyBuffer():
                                      "dones": self.dones,
                                      "value_estimates": self.value_estimates,
                                      "advantage_estimates": self.advantage_estimates,
-                                     "returns": self.returns})
+                                     "returns": self.returns,
+                                     "lstm_obs": self.lstm_obs,
+                                     "lstm_state_actor": self.lstm_state_actor,
+                                     "lstm_state_critic": self.lstm_state_critic})
 
 

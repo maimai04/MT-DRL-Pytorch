@@ -16,63 +16,61 @@ from pipeline.support_functions import get_model, get_environment, hyperparamete
 #######################################
 
 def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
-                               # where the results for the current run(with the current seed) are going to be saved
-                               results_dir: str,
-                               trained_dir: str,
-                               # number of assets used
-                               assets_dim: int,
-                               # shape of the observation space in the environment
-                               # (=n_stocks*n_features_per_stock+n_separate_features+n_stocks(for stock holdings/weights)+1(for cash position)
-                               shape_observation_space: int,
-                               # which ppo version is run: ppo (stable baselines3), ppoCustomBase, ppoCustomLSTM
-                               logger: logging,
-                               global_startdate_train: int,
-                               global_enddate_train: int,
-                               validation_window: int,
-                               testing_window: int,
-                               roll_window: int,
-                               global_enddate_backtesting_bull: int,
-                               global_enddate_backtesting_bear: int,
-                               seed: int,
-                               retrain_data: bool,
+                            # where the results for the current run(with the current seed) are going to be saved
+                            results_dir: str,
+                            trained_dir: str,
+                            # number of assets used
+                            assets_dim: int,
+                            # shape of the observation space in the environment
+                            # (=n_stocks*n_features_per_stock+n_separate_features+n_stocks(for stock holdings/weights)+1(for cash position)
+                            shape_observation_space: int,
+                            # which ppo version is run: ppo (stable baselines3), ppoCustomBase, ppoCustomLSTM
+                            logger: logging,
+                            global_startdate_train: int,
+                            global_enddate_train: int,
+                            validation_window: int,
+                            testing_window: int,
+                            roll_window: int,
+                            global_enddate_backtesting_bull: int,
+                            global_enddate_backtesting_bear: int,
+                            seed: int,
+                            retrain_data: bool,
 
-                               net_version: str,
-                               optimizer,
-                               optimizer_learning_rate,
-                               max_gradient_norm,
-                               total_timesteps_to_collect,
-                               num_epochs,
-                               batch_size,
+                            net_version: str,
+                            optimizer,
+                            optimizer_learning_rate,
+                            max_gradient_norm,
+                            total_episodes_to_train_base: int,
+                            total_episodes_to_train_cont: int,
+                            num_epochs,
+                            batch_size,
 
-                               gamma: float,
-                               gae_lam: float,
-                               clip: float,
-                               critic_loss_coef: float,
-                               entropy_loss_coef: float,
-                               total_episodes_to_train: int,
+                            gamma: float,
+                            gae_lam: float,
+                            clip: float,
+                            critic_loss_coef: float,
+                            entropy_loss_coef: float,
 
-                               env_step_version: str,
-                               rebalance_penalty: float,
-                               hmax_normalize: int,
-                               initial_cash_balance: int,
-                               transaction_fee: float,
-                               reward_scaling: float,
-                               reward_measure: str,
+                            env_step_version: str,
+                            rebalance_penalty: float,
+                            hmax_normalize: int,
+                            initial_cash_balance: int,
+                            transaction_fee: float,
+                            reward_scaling: float,
+                            reward_measure: str,
 
-                               strategy_mode: str = "ppoCustomBase",
-                               date_column: str="datadate",
+                            strategy_mode: str = "ppoCustomBase",
+                            date_column: str="datadate",
 
-                               now_hptuning: bool = False,
-                               only_hptuning: bool = False,
-                               #use_tuned_params: bool = False,  # todo: rm
-
-                               features_list: list = [],
-                               single_features_list: list = [],
-
-                               price_column_name: str="adjcp",
-                               save_results: bool=True,
-                               calculate_sharpe_ratio: bool=False,
-                               ) -> None:
+                            now_hptuning: bool = False,
+                            only_hptuning: bool = False,
+                            #use_tuned_params: bool = False,  # todo: rm
+                            features_list: list = [],
+                            single_features_list: list = [],
+                            price_column_name: str="adjcp",
+                            save_results: bool=True,
+                            calculate_sharpe_ratio: bool=False,
+                            ) -> None:
 
     """
     This function implements an expanding window cross validation for time series.
@@ -213,7 +211,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
     validation_ending = validation_beginning + validation_window # 63 days like rolling window
 
     # GET TEST BEGINNING AND ENDING for the first episode
-    testing_beginning = validation_ending
+    testing_beginning = train_ending
     testing_ending = testing_beginning + testing_window  # testing window 63 days like rolling window
 
     # GET BACKTESTING BULL MARKET BEGINNING AND ENDING
@@ -477,6 +475,21 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             # reset environment to obtain first observations (state representation vector), which will be used as initial state for testing
             # later
             obs_test = env_test.reset()
+            if net_version == "mlplstm_separate":
+                # in case we are using the stm, we need to extract the lstm features from the obs:
+                # we are only using asset returns and the volatility index as input to the lstm
+                # asset returns are located: just after the asset prices, which are coming after the asset holdings and after the cash position
+                # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings / weights, 1+asset_dim:1+asset_dim+asset_dim = prices,
+                # 1+asset_dim+asset_dim:1+asset_dim+asset_dim+asset_dim = returns
+                lstm_obs = obs_test[1 + assets_dim + assets_dim : 1 + assets_dim + assets_dim + assets_dim]
+                # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+                # (so it also doesn't matter what comes in between these two features)
+                lstm_obs = lstm_obs + obs_test[-1]
+            else:
+                lstm_obs = None
+                lstm_state_actor = None
+                lstm_state_critic = None
+
             logger.info(f"--Create instance test env finished.")
             ############## Environment Setup ends ##############
 
@@ -513,15 +526,15 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                   batch_size=batch_size,
                                   )
 
-            if retrain_data == True and current_episode_number > 1:
-                minus = 15
-                training_timesteps = len(train_data.index.unique()) * (total_episodes_to_train - minus)
-            else:
-                minus = 0
-                training_timesteps = len(train_data.index.unique()) * total_episodes_to_train
-
             logger.info(f"RETRAIN_DATA = {retrain_data} and current_episode_number {current_episode_number}:")
-            logger.info(f"\ntotal episodes to train on: {total_episodes_to_train-minus}")
+            if retrain_data == True and current_episode_number > 1:
+                training_timesteps = len(train_data.index.unique()-1) * total_episodes_to_train_cont
+                # note: "-1", because if the data is of length 10, there are 9 time steps and so on
+                logger.info(f"\ntotal episodes to train on: {total_episodes_to_train_cont}")
+            else:
+                training_timesteps = len(train_data.index.unique()-1) * total_episodes_to_train_base
+                logger.info(f"\ntotal episodes to train on: {total_episodes_to_train_base}")
+
             logger.info(f"\ntotal timesteps to train on: {training_timesteps}")
             logger.info(f"\ntotal data length (train): {len(train_data.index.unique())}")
 
@@ -570,11 +583,18 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                             f"{testing_beginning} to {testing_ending}, (ep={current_episode_number}).======")
 
             test_start = time.time()
+
             # for each time step available in the test set, we make predict actions, get the next state from the env, predict an action again etc.
             for j in range(len(test_data.index.unique())):
                 # use the trained model to predict actions using the test_obs we received far above when we setup the test env
                 # and run obs_test = env.reset()
-                action, _ = ppo_model.predict(new_obs=obs_test, env_step_version=env_step_version, n_assets=assets_dim)
+                action, _, lstm_state_actor, lstm_state_critic = ppo_model.predict(new_obs=obs_test,
+                                                                                    env_step_version=env_step_version,
+                                                                                    n_assets=assets_dim,
+                                                                                    new_lstm_obs=lstm_obs,
+                                                                                    lstm_state_actor=lstm_state_actor,
+                                                                                    lstm_state_critic=lstm_state_critic
+                                                                                    )
                 # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
                 # and info (here empty, hence _, since we don't need it)
                 obs_test, rewards, dones, _ = env_test.step(action)
@@ -620,9 +640,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             train_ending = train_ending + roll_window
             validation_beginning = train_ending
             validation_ending = validation_beginning + roll_window
-            #trading_beginning = validation_ending
-            #trading_ending = trading_beginning + roll_window
-            testing_beginning = validation_ending
+            testing_beginning = train_ending
             testing_ending = testing_beginning + roll_window
 
             # increase current episode number
@@ -664,6 +682,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         os.makedirs(f"{results_dir}/backtest_bull/last_state")
         os.makedirs(f"{results_dir}/backtest_bull/number_asset_holdings")
         os.makedirs(f"{results_dir}/backtest_bull/policy_actions")
+        os.makedirs(f"{results_dir}/backtest_bull/policy_actions_trans")
         os.makedirs(f"{results_dir}/backtest_bull/portfolio_value")
         os.makedirs(f"{results_dir}/backtest_bull/rewards")
         os.makedirs(f"{results_dir}/backtest_bull/sell_trades")
@@ -710,6 +729,23 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         env_backtesting_bull.action_space.seed(seed)
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bull = env_backtesting_bull.reset()
+        if net_version == "mlplstm_separate":
+            # in case we are using the stm, we need to extract the lstm features from the obs:
+            # we are only using asset returns and the volatility index as input to the lstm
+            # asset returns are located: just after the asset prices, which are coming after the asset holdings and after the cash position
+            # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings / weights, 1+asset_dim:1+asset_dim+asset_dim = prices,
+            # 1+asset_dim+asset_dim:1+asset_dim+asset_dim+asset_dim = returns
+            lstm_obs_backtest_bull = obs_backtest_bull[1 + assets_dim + assets_dim: 1 + assets_dim + assets_dim + assets_dim]
+            # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+            # (so it also doesn't matter what comes in between these two features)
+            lstm_obs_backtest_bull = lstm_obs_backtest_bull + obs_backtest_bull[-1]
+            lstm_state_actor = None # note: will be automaticaly initialized in predict function
+            lstm_state_critic = None
+        else:
+            lstm_obs_backtest_bull = None
+            lstm_state_actor = None
+            lstm_state_critic = None
+
         logger.info("created instance env_backtesting_bull and reset env.")
         ############## Environment Setup ends ##############
 
@@ -724,7 +760,13 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _ = ppo_model.predict(new_obs=obs_backtest_bull, env_step_version=env_step_version, n_assets=assets_dim)
+            action, _, lstm_state_actor, lstm_state_critic = ppo_model.predict(new_obs=obs_backtest_bull,
+                                                                               env_step_version=env_step_version,
+                                                                               n_assets=assets_dim,
+                                                                               new_lstm_obs=lstm_obs_backtest_bull,
+                                                                               lstm_state_actor=lstm_state_actor,
+                                                                               lstm_state_critic=lstm_state_critic
+                                                                               )
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bull, rewards, dones, _ = env_backtesting_bull.step(action)
@@ -747,6 +789,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         os.makedirs(f"{results_dir}/backtest_bear/last_state")
         os.makedirs(f"{results_dir}/backtest_bear/number_asset_holdings")
         os.makedirs(f"{results_dir}/backtest_bear/policy_actions")
+        os.makedirs(f"{results_dir}/backtest_bear/policy_actions_trans")
         os.makedirs(f"{results_dir}/backtest_bear/portfolio_value")
         os.makedirs(f"{results_dir}/backtest_bear/rewards")
         os.makedirs(f"{results_dir}/backtest_bear/sell_trades")
@@ -792,6 +835,22 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         env_backtesting_bear.action_space.seed(seed)
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bear = env_backtesting_bear.reset()
+        if net_version == "mlplstm_separate":
+            # in case we are using the stm, we need to extract the lstm features from the obs:
+            # we are only using asset returns and the volatility index as input to the lstm
+            # asset returns are located: just after the asset prices, which are coming after the asset holdings and after the cash position
+            # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings / weights, 1+asset_dim:1+asset_dim+asset_dim = prices,
+            # 1+asset_dim+asset_dim:1+asset_dim+asset_dim+asset_dim = returns
+            lstm_obs_backtest_bear = obs_backtest_bear[1 + assets_dim + assets_dim: 1 + assets_dim + assets_dim + assets_dim]
+            # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+            # (so it also doesn't matter what comes in between these two features)
+            lstm_obs_backtest_bear = lstm_obs_backtest_bear + obs_backtest_bear[-1]
+            lstm_state_actor = None # note: will be automaticaly initialized in predict function
+            lstm_state_critic = None
+        else:
+            lstm_obs_backtest_bear = None
+            lstm_state_actor = None
+            lstm_state_critic = None
         logger.info("created instance env_backtesting_bear and reset env.")
         ############## Environment Setup ends ##############
 
@@ -806,7 +865,13 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _ = ppo_model.predict(new_obs=obs_backtest_bear, env_step_version=env_step_version, n_assets=assets_dim)
+            action, _, lstm_state_actor, lstm_state_critic = ppo_model.predict(new_obs=obs_backtest_bear,
+                                                                               env_step_version=env_step_version,
+                                                                               n_assets=assets_dim,
+                                                                               new_lstm_obs=lstm_obs_backtest_bear,
+                                                                               lstm_state_actor=lstm_state_actor,
+                                                                               lstm_state_critic=lstm_state_critic
+                                                                               )
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bear, rewards, dones, _ = env_backtesting_bear.step(action)

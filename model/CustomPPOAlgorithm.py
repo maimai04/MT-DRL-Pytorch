@@ -5,19 +5,11 @@ import os
 import matplotlib.pyplot as plt
 import torch
 
-# import own libraries (using try-except in the case files have been uploaded separately to google Colab) # todo remove try-excepts
-try:
-    from model.CustomOnPolicyBuffer import OnPolicyBuffer
-except:
-    import CustomOnPolicyBuffer
-    from CustomOnPolicyBuffer import OnPolicyBuffer
-try:
-    from model.CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
+# import own libraries
+from model.CustomOnPolicyBuffer import OnPolicyBuffer
+from model.CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
     init_weights_actor_net, init_weights_feature_extractor_net, init_weights_critic_net
-except:
-    import CustomActorCriticNets
-    from CustomActorCriticNets import FeatureExtractorNet, ActorNet, CriticNet, BrainActorCritic, \
-    init_weights_actor_net, init_weights_feature_extractor_net, init_weights_critic_net
+
 ########################################################################
 # CUSTOM PPO ALGORITHM                                                 #
 ########################################################################
@@ -72,7 +64,6 @@ class PPO_algorithm():
                  # path where loss curves etc. are saved
                  performance_save_path: str = None,
                  env_step_version: str = "paper",
-                 lstm_features = False
                  ):
         """
         Here, the variables and hyperparameters are initialized.
@@ -111,8 +102,6 @@ class PPO_algorithm():
         self.performance_save_path = performance_save_path
         self.current_episode = current_episode
 
-        self.lstm_features = lstm_features
-
     def _collect_experiences_to_buffer(self, total_timesteps_to_collect):
         """
         When this function is called, the ppo agent collects experience (trajectories)
@@ -133,29 +122,34 @@ class PPO_algorithm():
 
         # get first observation from training environment
         obs = self.Env.reset(day=self.Env_firstday)#, initial=True)
-        if self.lstm_features == True:
+        if self.Brain.version == "mlplstm_separate": # separate net for actor and critic
             # we are only using asset returns and the volatility index as input to the lstm
             # asset returns are located: just after the asset prices, which are coming after the asset holdings and after the cash position
-            # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings / weights, 1+asset_dim:1+asset_dim+asset_dim = prices,
+            # see also state memory (0 = cash, 1:1+asset_dim = n_asset holdings, 1+asset_dim:1+asset_dim+asset_dim = prices,
             # 1+asset_dim+asset_dim:1+asset_dim+asset_dim+asset_dim = returns
-            lstm_obs = obs[1 + asset_dim + asset_dim : 1 + asset_dim + asset_dim + asset_dim]
+            lstm_obs = obs[1 + self.assets_dim + self.assets_dim : 1 + self.assets_dim + self.assets_dim + self.assets_dim]
             # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+            # (so it also doesn't matter what comes in between these two features)
             lstm_obs = lstm_obs + obs[-1]
             print("lstm obs: ")
             print("length")
             print(len(lstm_obs))
             print(lstm_obs)
             # finally, we need to initialize a hidden state in a certain shape, let's call it lstm_state
-            lstm_state  = [] # todo
+            # see also: https://discuss.pytorch.org/t/initialization-of-first-hidden-state-in-lstm-and-truncated-bptt/58384
+            # Initialize hidden state and cells state as (h, c), with zeros, for actor and critic separately
+            lstm_state_actor = self.Brain.feature_extractor.create_initial_lstm_state(self)
+            lstm_state_critic = self.Brain.feature_extractor.create_initial_lstm_state(self)
+            # on lstm and truncated BPTT: https://discuss.pytorch.org/t/initialization-of-first-hidden-state-in-lstm-and-truncated-bptt/58384
         else:
             lstm_obs = None
-            lstm_state = None
-
+            lstm_state_actor = None
+            lstm_state_critic = None
 
         # scale the observation (see documentation at the bottom for function "scale_observations"
         obs = self.scale_observations(obs=obs, env_step_version=self.env_step_version, n_assets=self.assets_dim)
-        print("scaled_obs: ")
-        print(obs)
+        #print("scaled_obs: ")
+        #print(obs)
 
         self.logger.info("train env reset, first obs: ")
         self.logger.info(obs[0:100]) # to check if the observations are correct
@@ -185,53 +179,53 @@ class PPO_algorithm():
                 obs = torch.as_tensor(obs, dtype=torch.float)
                 # get value estimate, sampled action and actions log probabilities from brain,
                 # which uses actor and critic architecture
-                V_estimate, actions, actions_log_prob, _, _, stdev = self.Brain.forward_pass(observation=obs,
-                                                                                             lstm_obs=lstm_obs,
-                                                                                             lstm_state=lstm_state)
-                # Note: this yields a
-                # value estimate for the current observation (state) => one value, as tensor of dim (1,)
+                # Note: if we don't use the lstm, the lstm states are simply None. Else, they are tensors that are going to be used
+                # in the next iteration as input
+                V_estimate, actions, actions_log_prob, _, _, stdev, lstm_state_actor_new, lstm_state_critic_new \
+                    = self.Brain.forward_pass(observations=obs,
+                                              lstm_observations=lstm_obs,
+                                              lstm_states_actor=lstm_state_actor,
+                                              lstm_states_critic=lstm_state_critic,
+                                              evaluation_mode=False,
+                                              actions=None)
+                # Note: this yields a value estimate for the current observation (state) => one value, as tensor of dim (1,)
                 # actions for the current obs (state), e.g. one weight for each stock, as tensor of dim (n_assets,)
-                # action log probabilities, for the curent obs (state), one for each stock action, as tensor of dim (n_assets,)
+                # action log probabilities, for the current obs (state), one for each stock action, as tensor of dim (n_assets,)
 
             # convert actions to numpy array so it can be used by the environment to get the
             # take a step, get the next state and compute the reward
             # note: must use .detach() on torch.tensors before converting them to numpy because it yields en error otherwise
             # why: because we cannot call numpy on a tensor that requires gradient (requires_grad = True)
             actions = actions.numpy()#.detach().numpy() # .cpu()
-            #print("actions from net: ")
-            #print(actions)
-
-            # CLIP ACTIONS
-            # this needs to be done because actions are sampled from a Distribution (here: Gaussian,
-            # but could also use other, like e.g. Beta distribution), and that leads to actions not
-            # necessarily being within the boundaries of the defined action space (note: I am using gym.Box for action space)
-            # clipping is used by most implementations online, including stable baselines
-            if self.env_step_version == "paper":
-                # clip actions to be between action space limits (in paper [-1,1]
-                actions_clipped = np.clip(actions, self.Env.action_space.low, self.Env.action_space.high)
-            elif self.env_step_version == "newNoShort":
-                # apply softmax again in sampled actions in order to make a vector of target weights
-                # which are all between [0,1] and sum up to one together.
-                actions_clipped = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
-            #print("actions_clipped: ")
-            #print(actions_clipped)
 
             # TAKE A STEP in the environment with the sampled action
             # in order to obtain the new state, a reward and a mask (done; True if
             # end of trajectory (dataset) reached, else False))
-            new_obs, reward, done, _ = self.Env.step(actions_clipped)
+            new_obs, reward, done, _ = self.Env.step(actions) # note: actions need to be scaled / clipped before usage, this is done in the env
             # scale the observations
             new_obs = self.scale_observations(obs=new_obs, env_step_version=self.env_step_version, n_assets=self.assets_dim)
 
             # SAVE TRAJECTORY: add obtained experience data to OnPolicyBuffer storage
             self.OnPolicyBuffer.add(obs, "obs", position=current_timesteps_collected)
             self.OnPolicyBuffer.add(actions, "actions", position=current_timesteps_collected)
-            self.OnPolicyBuffer.add(actions_clipped, "actions_clipped", position=current_timesteps_collected)
             self.OnPolicyBuffer.add(actions_log_prob, "actions_log_probs", position=current_timesteps_collected)
             self.OnPolicyBuffer.add(V_estimate, "value_estimates", position=current_timesteps_collected)
             self.OnPolicyBuffer.add(reward, "rewards", position=current_timesteps_collected)
             self.OnPolicyBuffer.add(done, "dones", position=current_timesteps_collected)
-
+            # only applicable if we are using lstm with separate layers for actor and critic
+            if self.Brain.version == "mlplstm_separate":
+                # add lstm observations
+                self.OnPolicyBuffer.add(lstm_obs, "lstm_obs", position=current_timesteps_collected)
+                # we have to detach from graph otherwise we will use it in backpropagation and we don't want that (would be calculation intense
+                # and the idea her is to have truncated BPTT)
+                lstm_state_actor = (lstm_state_actor[0].detach(), lstm_state_actor[1].detach())
+                lstm_state_critic = (lstm_state_critic[0].detach(), lstm_state_critic[1].detach())
+                self.OnPolicyBuffer.add(lstm_state_actor, "lstm_state_actor", position=current_timesteps_collected)
+                self.OnPolicyBuffer.add(lstm_state_critic, "lstm_state_critic", position=current_timesteps_collected)
+                # set the next lstm states as the ones we just received above from Brain
+                # again, need to detach, see also: https://discuss.pytorch.org/t/initialization-of-first-hidden-state-in-lstm-and-truncated-bptt/58384
+                lstm_state_actor = (lstm_state_actor_new[0].detach(), lstm_state_actor_new[1].detach())
+                lstm_state_critic = (lstm_state_critic_new[0].detach(), lstm_state_critic_new[1].detach())
             # the new observation becomes the "current observation" of the next iteration
             # unless the new observation is the last state; the last state (and the last state value)
             # will not be saved into the buffer, because we don't need them for training later
@@ -256,8 +250,13 @@ class PPO_algorithm():
         # we need the terminal value estimate in order tp compute the advantages below
         with torch.no_grad():
             obs = torch.as_tensor(new_obs, dtype=torch.float)
-            V_terminal_estimate, _, _, _, _, stdev = self.Brain.forward_pass(observation=obs)
-
+            V_terminal_estimate, _, _, _, _, stdev, _, _ \
+                = self.Brain.forward_pass(observations=obs,
+                                          lstm_observations=lstm_obs,
+                                          lstm_states_actor=lstm_state_actor,
+                                          lstm_states_critic=lstm_state_critic,
+                                          evaluation_mode=False,
+                                          actions=None)
         self.OnPolicyBuffer.calculate_and_store_advantages(terminal_V_estimate=V_terminal_estimate,
                                                            gamma=self.gamma,
                                                            gae_lambda=self.gae_lambda)
@@ -295,13 +294,35 @@ class PPO_algorithm():
         epoch_colnames = [suffix + str(s) for s in list(range(1, self.num_epochs + 1))]
 
         # at the end of every 10 epochs, validation rewards are calculated on the holdout data set
-        validation_rewards = []
+        explained_variances_whole_training = []
 
         while learning_timesteps_done < total_learning_timesteps:
             self.logger.info(f"\n---TRAINING_TIMESTEPS_DONE: {learning_timesteps_done} / {total_learning_timesteps}")
 
             # collect experience in the environment based on the current policy and store in buffer
             self._collect_experiences_to_buffer(total_timesteps_to_collect=self.total_timesteps_to_collect)
+
+            # calculate the explained variance (current value estimates and returns (= target value))
+            # if >1: value estimates from critic are a good predictor of (bootstrapped) returns
+            # if <0: worse than predicting nothing (in the beginning, this is what we get)
+            # see: https://medium.com/aureliantactics/understanding-ppo-plots-in-tensorboard-cbc3199b9ba2
+            # The next time trajectories are going to be collected, hopefully the estimates are going to be more accurate so that
+            # the explained variance is going to go up because the estimation error goes down (or the variance in the returns goes up, but then probably the
+            # estimation error would also go up because probably, the returns and values would converge more frequently, but this is just an assumption).
+            # see : https://www.oreilly.com/library/view/machine-learning-algorithms/9781789347999/49c4b96f-a567-4513-8e91-9f41b0b4dab0.xhtml
+            all_returns = self.OnPolicyBuffer.trajectory_dict["returns"].flatten()
+            all_V_estimates = self.OnPolicyBuffer.trajectory_dict["value_estimates"].flatten()
+            variance_target_value = np.var(all_returns)
+            variance_estimation_error = np.var(all_returns - all_V_estimates)
+            explained_variance = 1 - variance_estimation_error / variance_target_value
+            explained_variances_whole_training.append(explained_variance)
+            del all_returns, all_V_estimates, variance_target_value, variance_estimation_error, explained_variance
+            if self.performance_save_path != None:
+                pd.DataFrame({"explained_variance": explained_variances_whole_training}).to_csv(os.path.join(self.performance_save_path,
+                                                                                                             f"explained_variance_"
+                                                                                                             f"ep{self.current_episode}_"
+                                                                                                             "LearningTimestepsDone_"
+                                                                                                             f"{learning_timesteps_done}.csv"))
 
             # initialize emtpy lists for storing parameters / performance metrics over epochs
             # every batch parameter is going to be appended to these lists
@@ -314,8 +335,10 @@ class PPO_algorithm():
             entropy_loss_all_epochs = []
             combined_loss_all_epochs = []
             advantages_all_epochs = []
+            returns_all_epochs = []
             standard_deviations_all_epochs = []
             action_means_all_epochs = []
+            value_estimates_all_epochs = []
 
             # now we train for multiple epochs
             for epoch in range(1, self.num_epochs + 1):
@@ -331,8 +354,10 @@ class PPO_algorithm():
                 entropy_loss_of_epoch = []
                 combined_loss_of_epoch = []
                 advantages_of_epoch = []
+                returns_of_epoch = []
                 standard_deviations_of_epoch = []
                 action_means_of_epoch = []
+                value_estimates_of_epoch = []
 
                 # get batch from each tensor of batches
                 # Note: normally, "batch" means the whole training data, here
@@ -347,6 +372,26 @@ class PPO_algorithm():
                     batch_returns = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["returns"][start_idx:batch_idx].flatten(), dtype=torch.float)
                     #batch_V_estimates = torch.tensor(self.OnPolicyBuffer.trajectory_dict["value_estimates"][start_idx:batch_idx])  #
                     batch_advantages = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["advantage_estimates"][start_idx:batch_idx].flatten(), dtype=torch.float)  #
+
+                    if self.Brain.version == "mlplstm_separate":
+                        # get lstm obs
+                        batch_lstm_obs = torch.as_tensor(self.OnPolicyBuffer.trajectory_dict["lstm_obs"][start_idx:batch_idx], dtype=torch.float)
+                        # get lstm hidden and cell states for actor and critic
+                        batch_lstm_state_actor = self.OnPolicyBuffer.trajectory_dict["lstm_state_actor"][start_idx:batch_idx]
+                        batch_lstm_state_critic = self.OnPolicyBuffer.trajectory_dict["lstm_state_critic"][start_idx:batch_idx]
+                        # Note: we only need the first lstm state of each batch
+                        # (= lstm state which encodes all previous time series before the start of this batch)
+                        first_lstm_state_actor = batch_lstm_state_actor[0]
+                        first_lstm_state_critic = batch_lstm_state_critic[0]
+                        print("first_lstm_state_actor")
+                        print(first_lstm_state_actor)
+                        print("first_lstm_state_critic")
+                        print(first_lstm_state_critic)
+                    else:
+                        batch_lstm_obs=None
+                        first_lstm_state_actor=None
+                        first_lstm_state_critic=None
+
                     start_idx += self.batch_size
 
                     self.logger.info(f"BATCH NUMBER: {batch_num + 1}")
@@ -355,7 +400,7 @@ class PPO_algorithm():
                         self.logger.info(batch_obs)
 
                     # Standardizing advantage estimates (creating z-score) across each batch
-                    # (not in the paper)
+                    # (not in the paper, but discussed here for example, in the comments: https://openreview.net/forum?id=r1etN1rtPB)
                     # many implementations use a normalized version because it makes convergence
                     # more stable and also decreases the variance of our advantage estimates
                     # many people say that it therefore makes learning more stable
@@ -366,7 +411,7 @@ class PPO_algorithm():
                     # convert the actions from the batch (old actions, since these are actions with the "old" policy, the one
                     # we used to sample trajectories into the buffer) to torch tensor, since we are going to use them so
                     # sample the new action log probabilities
-                    old_actions = batch_actions #torch.as_tensor(batch_actions, dtype=torch.float)
+                    old_actions = batch_actions
                     # Get value estimates, current action log probabilities and action distribution entropy
                     # with current weights from critic doing a forward pass
                     # NOTE: in the first round the forward pass will yield the same actions / action distr. / action log probs.
@@ -374,15 +419,17 @@ class PPO_algorithm():
                     # NOTE: this time we should not do the forward pass with "with torch.no_grad()", because we will later call backward()
                     # and want to be able to compute the gradients in order to update our policy
                     new_V_estimate, current_action_new_log_prob, action_distr_entropy, action_means, _, stdev = \
-                        self.Brain.forward_pass(observation=torch.as_tensor(batch_obs, dtype=torch.float),
+                        self.Brain.forward_pass(observations=batch_obs, #torch.as_tensor(batch_obs, dtype=torch.float),
                                                 actions=old_actions,
-                                                evaluation_mode=True)  # evaluation mode must be true: see documentation in Brain class
+                                                evaluation_mode=True,
+                                                lstm_observations=batch_lstm_obs,
+                                                lstm_states_actor=first_lstm_state_actor,
+                                                lstm_states_critic=first_lstm_state_critic)  # evaluation mode must be true: see documentation in Brain class
                     # Calculate the probabilities ratio (since we have log probabilities, we can simply
                     # subtract them in the exponential function and we get back the "original", non-log probabilities)
                     # log probabilities are used as a convention, because they make calculations easier
                     # see also: https://cs.stackexchange.com/questions/70518/why-do-we-use-the-log-in-gradient-based-reinforcement-algorithms
                     # note: the log probabilities are scalars, hence the probability ratio will be a scalar value as well, not a vector of ratios
-
                     proba_ratio = torch.exp(current_action_new_log_prob - batch_actions_log_probs)
                     # in the first iteration (before first policy update),
                     # the ratio should be 1, since we will sample the same actions with the same net weights every time
@@ -405,7 +452,7 @@ class PPO_algorithm():
                     # calculate the clipped surrogate los (=actor loss / policy network loss)
                     # since the actor loss in the paper is actually defined as "actor gain", so we would have to maximize it with
                     # gradient ascent; but here we want to use gradient descent so we will take the negative of the surrogate loss mean
-                    actor_loss = torch.mean(-surr_loss)
+                    actor_loss = -torch.mean(surr_loss)
 
                     ### CRITIC LOSS (VALUE LOSS)
                     # Value loss using the TD(gae_lambda) target in the calculation of the returns (hence more smooth, less variance)
@@ -420,9 +467,10 @@ class PPO_algorithm():
                     entropy_loss = -torch.mean(action_distr_entropy)
 
                     # TOTAL LOSS FUNCTION:
-                    # Note: the total loss for gradient ascent would be: actor_loss(=gain) - c1*critic_loss(=loss) + c2*entropy_loss(=gain),
+                    # Note: the total loss for gradient ascent would be: actor_loss(=gain) - c1*critic_loss(=loss) + c2*entropy_loss(=gain, the higher the better),
                     # but since we do gradient descent, actor_loss and entropy loss are negative, value loss is positive (opposite signs)
                     # note: the negative sign for the actor loss has already been added some lines above when we took the negative of the
+                    # so it is then: total actor loss: max a-c+e = min -a+c-e <= this we use
                     # surrogate function, similarly for the entropy loss above
                     total_loss = actor_loss + self.critic_loss_coef * critic_loss + self.entropy_loss_coef * entropy_loss
 
@@ -441,17 +489,13 @@ class PPO_algorithm():
                     # https://www.reddit.com/r/MachineLearning/comments/4qshk3/max_norm_gradientweight_clipping_for/
                     # default value the same as the one from stable baselines for reproducibility purposes
                     torch.nn.utils.clip_grad_norm_(self.Brain.parameters(), self.max_gradient_normalization)
-                    self.logger.info("Brain SFE parameters before optimizer step ")
-                    for name, param in self.Brain.shared_feature_extractor.named_parameters():
-                        if param.requires_grad:
-                            self.logger.info(f"name: {name}")
-                            self.logger.info(param)
 
-                    self.logger.info("Brain gradients before optimizer step ")
-                    for name, param in self.Brain.named_parameters():
-                        if param.requires_grad:
-                            self.logger.info(f"name: {name}")
-                            self.logger.info(param.grad)
+                    if epoch % 5 == 0:
+                        self.logger.info("Brain gradients before optimizer step ")
+                        for name, param in self.Brain.named_parameters():
+                            if param.requires_grad:
+                                self.logger.info(f"name: {name}")
+                                self.logger.info(param.grad)
                     # now, finally, we take ONE step in the direction of the gradient
                     self.Brain.optimizer.step()
 
@@ -465,8 +509,10 @@ class PPO_algorithm():
                     surr_loss_2_of_epoch.append(np.array(surr_loss_2.detach()).flatten())
                     surr_loss_of_epoch.append(np.array(surr_loss.detach()).flatten())
                     advantages_of_epoch.append(np.array(advantage_est_standardized.detach()).flatten())
+                    returns_of_epoch.append(np.array(batch_returns.detach()).flatten())
                     standard_deviations_of_epoch.append(np.array(stdev.detach()).flatten())
                     action_means_of_epoch.append(np.array(action_means.detach()).flatten())
+                    value_estimates_of_epoch.append(np.array(new_V_estimate.detach()).flatten())
                     # metrics that come as single values per batch (each of length 1)
                     # => list of values
                     actor_loss_of_epoch.append(actor_loss.detach())
@@ -500,12 +546,15 @@ class PPO_algorithm():
                 # [[v,v,v],[v,v,v],[v,v,v],...] = [epoch1, epoch2, ...]
                 # a vector or array per day
                 advantages_all_epochs.append(np.array(advantages_of_epoch).flatten())
+                returns_all_epochs.append(np.array(returns_of_epoch).flatten())
                 prob_ratio_all_epochs.append(np.array(prob_ratio_of_epoch).flatten())
                 surr_loss_1_all_epochs.append(np.array(surr_loss_1_of_epoch).flatten())
                 surr_loss_2_all_epochs.append(np.array(surr_loss_2_of_epoch).flatten())
                 surr_loss_all_epochs.append(np.array(surr_loss_of_epoch).flatten())
                 standard_deviations_all_epochs.append(np.array(standard_deviations_of_epoch).flatten()) # one std for all actions for each day (64 for a batch)
                 action_means_all_epochs.append(np.array(action_means_of_epoch).flatten()) # at each day, n_asset number of actions
+                value_estimates_all_epochs.append(np.array(value_estimates_of_epoch).flatten())
+
                 # one loss per batch
                 actor_loss_all_epochs.append(actor_loss_of_epoch)
                 critic_loss_all_epochs.append(critic_loss_of_epoch)
@@ -517,20 +566,24 @@ class PPO_algorithm():
                 self.logger.info(f"average total Epoch loss: {np.mean(combined_loss_of_epoch)}")
 
             # AT THE END OF ALL EPOCHS
-            # after all 10 (or other) epochs, we save the data to csv
+
+            # after all 10 epochs (or else, as defined in config.py), we save the data to .csv
             if self.performance_save_path != None:
-                for li, liname in zip([advantages_all_epochs, prob_ratio_all_epochs, surr_loss_1_all_epochs,
-                                       surr_loss_2_all_epochs, surr_loss_all_epochs, standard_deviations_all_epochs,
-                                       action_means_all_epochs],
-                                      ["advantages_all_epochs", "prob_ratio_all_epochs", "surr_loss_1_all_epochs",
-                                       "surr_loss_2_all_epochs", "surr_loss_all_epochs", "standard_deviations_all_epochs",
-                                       "action_means_all_epochs"]):
+                # save arrays to separate .csv files, for which there is an estimate per STEP
+                for li, liname in zip([advantages_all_epochs, returns_all_epochs, prob_ratio_all_epochs,
+                                       surr_loss_1_all_epochs, surr_loss_2_all_epochs, surr_loss_all_epochs,
+                                       standard_deviations_all_epochs, action_means_all_epochs, value_estimates_all_epochs],
+                                      ["advantages_all_epochs", "returns_all_epochs", "prob_ratio_all_epochs",
+                                       "surr_loss_1_all_epochs", "surr_loss_2_all_epochs", "surr_loss_all_epochs",
+                                       "standard_deviations_all_epochs", "action_means_all_epochs", "value_estimates_all_epochs"]):
                     pd.DataFrame(np.transpose(li),
                              columns=epoch_colnames).to_csv(os.path.join(self.performance_save_path,
                                                                              f"{liname}_"
                                                                              f"ep{self.current_episode}_"
                                                                              "LearningTimestepsDone_"
                                                                              f"{learning_timesteps_done}.csv"))
+                # save the relevant losses to one combined .csv file, for which there is one estimate per UDPATE
+                # (which in my work, is per one batch of 64 steps)
                 pd.DataFrame({"actor_loss": np.array(actor_loss_all_epochs).flatten(),
                               "critic_loss": np.array(critic_loss_all_epochs).flatten(),
                               "entropy_loss": np.array(entropy_loss_all_epochs).flatten(),
@@ -545,29 +598,69 @@ class PPO_algorithm():
                 self.logger.info(param)
 
             # after all 10 epochs, if we have passed a validation env, we do some "out of sample testing"
+            # this is for monitoring how well we perform in training and how well we generalize on the validation set
             if self.EnvVal is not None:
                 self.logger.info(f"Validation beginning.")
-                self._validation()
+                self._validation(learning_timesteps_done=learning_timesteps_done)
                 self.logger.info(f"Validation ended.")
 
-    def _validation(self) -> None:
+    def _validation(self, learning_timesteps_done=None) -> None:
         validation_rewards = []
+        validation_values = []
         obs_val = self.EnvVal.reset(day=self.EnvVal_firstday)
+        if self.Brain.version == "mlplstm_separate":
+            # initialize log returns
+            lstm_obs_val = obs_val[1 + self.assets_dim + self.assets_dim: 1 + self.assets_dim + self.assets_dim + self.assets_dim]
+            # for the vix (volatility index), we can just take the last entry (and concatenate to the list)
+            lstm_obs_val = lstm_obs_val + obs_val[-1]
+        else:
+            lstm_obs_val = None
+            lstm_state_actor = None
+            lstm_state_critic = None
 
         for j in range(len(self.EnvVal.df.index.unique())):
             # note: scaling is already included in the predict function, see below,
             # hence we do not need to scale obs before prediction here
-            val_actions, val_value = self.predict(obs_val, env_step_version=self.env_step_version, n_assets=self.assets_dim)
+            val_actions, val_value, lstm_state_actor, lstm_state_critic = \
+                self.predict(new_obs=obs_val,
+                             env_step_version=self.env_step_version,
+                             n_assets=self.assets_dim,
+                             new_lstm_obs=lstm_obs_val,
+                             lstm_state_actor=lstm_state_actor,
+                             lstm_state_critic=lstm_state_critic)
             obs_val, val_rewards, val_done, _ = self.EnvVal.step(val_actions)
             # append validation rewards to list
-            validation_rewards.append(val_rewards)
+            validation_rewards.append(val_rewards) # note: validation rewards are saved to .csv via env already
+            validation_values.append(val_rewards)
             if val_done:
                 break
         self.logger.info(f"validation mean reward: {np.mean(validation_rewards)}")
         self.logger.info(f"validation total reward: {np.mean(validation_rewards)}")
+
+        if self.performance_save_path != None:
+            # save array for value estimates in validation set to separate .csv files, for which there is an estimate per STEP
+            pd.DataFrame({"value_estimates_validation": np.array(validation_values)}).to_csv(os.path.join(self.performance_save_path,
+                                                                     f"value_estimates_validation_"
+                                                                     f"ep{self.current_episode}_"
+                                                                     "LearningTimestepsDone_"
+                                                                     f"{learning_timesteps_done}.csv"))
         return None # Note: rewards are already saved to csv by the validation env
 
-    def predict(self, new_obs, env_step_version, n_assets):
+    def predict(self, new_obs, env_step_version, n_assets, new_lstm_obs=None, lstm_state_actor=None, lstm_state_critic=None):
+        if self.Brain.version == "mlplstm_separate" and lstm_state_actor == None:
+            # if we have not passed an initial lstm hidden state, we make a zero state (h0, c0),
+            # else we use the one we have just passed
+            # returns
+            new_lstm_obs = new_obs[1 + self.assets_dim + self.assets_dim: 1 + self.assets_dim + self.assets_dim + self.assets_dim]
+            # vix
+            new_lstm_obs = new_lstm_obs + new_lstm_obs[-1]
+            print("new lstm obs: ")
+            print("length")
+            print(len(new_lstm_obs))
+            print(new_lstm_obs)
+            lstm_state_actor = self.Brain.feature_extractor.create_initial_lstm_state(self)
+            lstm_state_critic = self.Brain.feature_extractor.create_initial_lstm_state(self)
+
         # new observations need to be scaled as well, because they come from the environment "raw"
         new_obs = self.scale_observations(obs=new_obs, env_step_version=env_step_version, n_assets=n_assets)
         # after that, we need to convert the observation to a torch tensor for the network
@@ -575,11 +668,21 @@ class PPO_algorithm():
         # without gradient calculation (no backward pass, only forward)
         # (this needs to be specified in pytorch, different than for tensorflow normally)
         with torch.no_grad():
-            actions, value = self.Brain.predict(new_obs, deterministic=False)
+            actions, value, lstm_state_actor, lstm_state_critic = self.Brain.predict(new_obs=new_obs,
+                                                                                    deterministic=False,
+                                                                                    new_lstm_obs=new_lstm_obs,
+                                                                                    lstm_states_actor=lstm_state_actor,
+                                                                                    lstm_states_critic=lstm_state_critic)
         # Convert actions and value to numpy array
         actions = actions.detach().numpy()
         value = value.detach().numpy()
-        return actions, value
+        if lstm_state_actor != None:
+            return actions, \
+                   value, \
+                   (lstm_state_actor[0].detach(), lstm_state_actor[1].detach()),\
+                   (lstm_state_critic[0].detach(), lstm_state_critic[1].detach())
+        elif lstm_state_actor == None:
+            return actions, value, lstm_state_actor, lstm_state_critic
 
     def save(self, model_save_path):
         torch.save(self.Brain.state_dict(), model_save_path)
