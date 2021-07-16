@@ -1,23 +1,36 @@
-# Model Building Requirements
-numpy==1.16.4
-pandas==1.0.3
+# data preparation / handling
+numpy
+pandas>=1.1.5
 stockstats
-scikit-learn==0.21.0
-gym==0.15.3
-stable-baselines[mpi]
-tensorflow==1.15.4
 
 joblib==0.15.1
+# ploting
+matplotlib
 
-# plot
-matplotlib==3.2.1
-
-# testing requirements
-pytest>=5.3.2,<6.0.0
+# Model Building Requirements
+# machine learning / data science
+scikit-learn>=0.21.0
+gym>=0.17
 
 # packaging
 setuptools>=41.4.0,<42.0.0
-wheel>=0.33.6,<0.34.0
+wheel>=0.33.6
 
+# new version: stable-baselines 3 with pytorch
+stable-baselines3[extra]
+
+# testing requirements
+pytest
+
+# previous version (stable-baselines with tensorflow 1.x
+#gym==0.15.3
+#stable-baselines[mpi]
+#tensorflow==1.15.4
+#numpy==1.16.4
+#pandas==1.0.3
+#matplotlib==3.2.1
+#wheel>=0.33.6,<0.34.0
+#pytest>=5.3.2,<6.0.0
+#scikit-learn==0.21.0
 
 
