@@ -152,24 +152,24 @@ class FeatureExtractorNet(nn.Module):
             mid_features_lstm, lstm_states = self.feature_extractor_lstm(input=lstm_observations, hx=lstm_states)
             # reshape the features received from the mlp feature extractor
             mid_features_mlp_reshaped = mid_features_mlp.reshape(len(observations),  self.mid_features_size)
-            if len(observations) ==64:
+            #if len(observations) ==64:
                 #print("mid_features mlp reshaped: ")
-                print(mid_features_mlp_reshaped.shape)
-                print(mid_features_mlp_reshaped)
+            #    print(mid_features_mlp_reshaped.shape)
+            #    print(mid_features_mlp_reshaped)
             # reshape the features received from the lstm feature extractor
             mid_features_lstm_reshaped = mid_features_lstm.reshape(len(observations),  self.mid_features_size)
-            if len(observations) ==64:
+            #if len(observations) ==64:
                 #print("mid_features lstm: ")
                 #print(mid_features_lstm.shape)
                 #print(mid_features_lstm)
-                print("mid_features lstm reshaped: ")
-                print(mid_features_lstm_reshaped.shape)
+            #    print("mid_features lstm reshaped: ")
+            #    print(mid_features_lstm_reshaped.shape)
                 #print(mid_features_lstm_reshaped)
             # concatenate features on dim 1
             mid_features = torch.cat((mid_features_mlp_reshaped, mid_features_lstm_reshaped), dim=1)
-            if len(observations) ==64:
-                print("mid_features combined: ")
-                print(mid_features.shape)
+            #if len(observations) ==64:
+            #    print("mid_features combined: ")
+            #    print(mid_features.shape)
                 #print(mid_features)
                 #print(mid_features[0])
 

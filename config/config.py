@@ -26,9 +26,9 @@ class settings:
     STRATEGY_MODE = "ppoCustomBase"
 
     #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
-    #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
+    REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
-    REWARD_MEASURE = "semvarPenalty"
+    #REWARD_MEASURE = "semvarPenalty"
 
     RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
     #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
@@ -134,8 +134,8 @@ class data_settings:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    #STEP_VERSION = "paper"
-    STEP_VERSION = "newNoShort"
+    STEP_VERSION = "paper"
+    #STEP_VERSION = "newNoShort"
 
     # ---------------LEAVE---------------
     if STEP_VERSION == "newNoShort":
@@ -221,8 +221,8 @@ class agent_params:
         #NET_VERSION = "mlp_separate" # todo: rm
         #NET_VERSION = "mlplstm_separate" # todo: rm
 
-        #NET_VERSION = "mlp_shared"
-        NET_VERSION = "mlplstm_shared"
+        NET_VERSION = "mlp_shared"
+        #NET_VERSION = "mlplstm_shared"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
@@ -240,8 +240,8 @@ class agent_params:
         ### LEARNING PARAMETERS
         TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
         #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
-        TOTAL_EPISODES_TO_TRAIN_BASE = 3#50#60 #10 # for initial training, later a little bit less if retrain==True)
-        TOTAL_EPISODES_TO_TRAIN_CNT = 1#TOTAL_EPISODES_TO_TRAIN_BASE-10
+        TOTAL_EPISODES_TO_TRAIN_BASE = 50#60 #10 # for initial training, later a little bit less if retrain==True)
+        TOTAL_EPISODES_TO_TRAIN_CNT = 40#TOTAL_EPISODES_TO_TRAIN_BASE-10
 
 class paths:
     # ---------------LEAVE---------------
