@@ -28,6 +28,7 @@ def get_environment(df: pd.DataFrame,
                     mode: str, # validation, test
                     assets_dim: int, # number of assets
                     shape_observation_space: int, # n_assets*n_features_per_asset + 1(for cash) + n_assets (for asset holdings)
+                    shape_lstm_observation_space: int,
                     initial: bool,  # for validation, we always have an "initial state"
                     results_dir: str,
                     reset_counter: int,
@@ -35,6 +36,7 @@ def get_environment(df: pd.DataFrame,
                     strategy_mode: str,
                     features_list: list,
                     single_features_list: list,
+                    lstm_features_list: list,
                     env_step_version: str,
                     rebalance_penalty: float,
                     hmax_normalize: int,
@@ -48,6 +50,7 @@ def get_environment(df: pd.DataFrame,
                     previous_asset_price: list = [],
                     save_results: bool=True,
                     calculate_sharpe_ratio: bool=False,
+                    total_episodes_to_train: int=10,
                     ) -> gym.Env:
 
     if strategy_mode == "ppo": # todo: rm
@@ -55,35 +58,9 @@ def get_environment(df: pd.DataFrame,
         # it doesn't actually make a difference (for games and complex problems, ppo is often used with parallel threads, but I did not
         # implement parallel workers for my work
         env = DummyVecEnv([lambda: FinancialMarketEnv(df=df,
-                                                      features_list=features_list,
-                                                      day=day,
-                                                      iteration=iteration,
-                                                      # only used for logger.info
-                                                      model_name=strategy_mode,
-                                                      mode=mode,
-                                                      hmax_normalize=hmax_normalize,
-                                                      initial_cash_balance=initial_cash_balance,
-                                                      transaction_fee_percent=transaction_fee,
-                                                      reward_scaling=reward_scaling,
-                                                      assets_dim=assets_dim,
-                                                      shape_observation_space=shape_observation_space,
-                                                      initial=initial,
-                                                      # for validation, we always have an "initial state"
-                                                      previous_state=previous_state,
-                                                      previous_asset_price=previous_asset_price,
-                                                      price_colname=price_column_name,
-                                                      results_dir=results_dir,
-                                                      reset_counter=reset_counter,
-                                                      logger=logger,
-                                                      save_results=save_results,
-                                                      calculate_sharpe_ratio=calculate_sharpe_ratio,
-                                                      rebalance_penalty=rebalance_penalty,
-                                                      reward_measure=reward_measure,
-                                                      step_version="paper")])
-    elif settings.STRATEGY_MODE == "ppoCustomBase":
-        env = FinancialMarketEnv(df=df,
                                  features_list=features_list,
                                  single_features_list=single_features_list,
+                                 lstm_features_list=lstm_features_list,
                                  day=day,
                                  iteration=iteration,
                                  # only used for logger.info
@@ -95,6 +72,7 @@ def get_environment(df: pd.DataFrame,
                                  reward_scaling=reward_scaling,
                                  assets_dim=assets_dim,
                                  shape_observation_space=shape_observation_space,
+                                 shape_lstm_observation_space=shape_lstm_observation_space,
                                  initial=initial,
                                  # for validation, we always have an "initial state"
                                  previous_state=previous_state,
@@ -108,7 +86,40 @@ def get_environment(df: pd.DataFrame,
                                  performance_calculation_window=7,
                                  step_version=env_step_version,
                                  rebalance_penalty=rebalance_penalty,
-                                 reward_measure=reward_measure
+                                 reward_measure=reward_measure,
+                                 total_episodes_to_train=total_episodes_to_train)])
+    elif settings.STRATEGY_MODE == "ppoCustomBase":
+        env = FinancialMarketEnv(df=df,
+                                 features_list=features_list,
+                                 single_features_list=single_features_list,
+                                 lstm_features_list=lstm_features_list,
+                                 day=day,
+                                 iteration=iteration,
+                                 # only used for logger.info
+                                 model_name=strategy_mode,
+                                 mode=mode,
+                                 hmax_normalize=hmax_normalize,
+                                 initial_cash_balance=initial_cash_balance,
+                                 transaction_fee_percent=transaction_fee,
+                                 reward_scaling=reward_scaling,
+                                 assets_dim=assets_dim,
+                                 shape_observation_space=shape_observation_space,
+                                 shape_lstm_observation_space=shape_lstm_observation_space,
+                                 initial=initial,
+                                 # for validation, we always have an "initial state"
+                                 previous_state=previous_state,
+                                 previous_asset_price=previous_asset_price,
+                                 price_colname=price_column_name,
+                                 results_dir=results_dir,
+                                 reset_counter=reset_counter,
+                                 logger=logger,
+                                 save_results=save_results,
+                                 calculate_sharpe_ratio=calculate_sharpe_ratio,
+                                 performance_calculation_window=7,
+                                 step_version=env_step_version,
+                                 rebalance_penalty=rebalance_penalty,
+                                 reward_measure=reward_measure,
+                                 total_episodes_to_train=total_episodes_to_train,
                                  )
     else:
         print("ERROR - no valid strategy mode passed. cannot create instance env_train.")
@@ -118,6 +129,7 @@ def get_environment(df: pd.DataFrame,
 def get_model(train_environment,
               number_train_data_points: int,
               shape_observation_space: int,
+              shape_lstm_observation_space: int,
               assets_dim: int,
               strategy_mode: str,
               env_step_version: str = "",
@@ -158,7 +170,7 @@ def get_model(train_environment,
                                  env_step_version=env_step_version,
                                  optimizer=optimizer,
                                  learning_rate=optimizer_learning_rate,
-                                 lstm_observations_size=assets_dim+1, #hardcoded: number od assets (=number of log returns) + 1 for vix
+                                 lstm_observations_size=shape_lstm_observation_space,
                                  lstm_hidden_size_feature_extractor= 64,
                                  lstm_num_layers=2,
                                  feature_extractor_class=FeatureExtractorNet,
@@ -189,6 +201,7 @@ def get_model(train_environment,
         logger.info(f"number of train data points passed: {number_train_data_points}")
         buffer = OnPolicyBuffer(buffer_size=buffer_size,
                                 obs_shape=(shape_observation_space,),
+                                lstm_obs_shape=(shape_lstm_observation_space,),
                                 actions_number=assets_dim,
                                 )
         if now_hptuning or use_tuned_params:

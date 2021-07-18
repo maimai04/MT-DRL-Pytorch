@@ -40,7 +40,6 @@ def load_dataset(*,
     if col_subset is not None:
         subcols = [date_subset, asset_name_column] + col_subset
         df = df[subcols]
-
     return df
 
 def create_dirs(mode: str = "run_dir", # "seed_dir"
@@ -52,6 +51,8 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
                 strategy_mode: str = "ppoCustomBase",
                 features_mode: str = "",
                 reward_measure: str = "",
+                net_version: str = "",
+                env_step_version: str = "",
                 run_mode: str = "",
                 seed: int=None,
                 subdir_names: dict = {},
@@ -71,8 +72,10 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
         results_dir = os.path.join(results_path,
                                    f"{now}"
-                                   f"_{strategy_mode}_"
-                                   f"_reward_{reward_measure}"
+                                   f"_{strategy_mode}"
+                                   f"_{reward_measure}"
+                                   f"_{net_version}"
+                                   f"_{env_step_version}"
                                    f"_{features_mode}"
                                    f"_{run_mode}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
@@ -80,7 +83,9 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
         trained_dir = os.path.join(trained_models_path, f"{now}"
                                                         f"_{strategy_mode}"
-                                                        f"_reward_{reward_measure}"
+                                                        f"_{reward_measure}"
+                                                        f"_{net_version}"
+                                                        f"_{env_step_version}"
                                                         f"_{features_mode}"
                                                         f"_{run_mode}")
         os.makedirs(trained_dir)
@@ -125,9 +130,11 @@ def config_logging_to_txt(results_subdir,
                           initial_cash_balance,
                           transaction_fee,
                           reward_scaling,
+                          rebalance_penalty,
                           country,
                           features_list,
                           single_features_list,
+                          lstm_features_list,
                           features_mode,
                           data_path,
                           raw_data_path,
@@ -195,12 +202,14 @@ def config_logging_to_txt(results_subdir,
                         f"INITIAL_CASH_BALANCE     : {initial_cash_balance}\n"
                         f"TRANSACTION_FEE_PERCENT  : {transaction_fee}\n"
                         f"REWARD_SCALING           : {reward_scaling}\n"
+                        f"REBALANCE_PENALTY        : {rebalance_penalty}\n"
                         "------------------------------------\n"
                         f"DATA PREPARATION SETTINGS\n"
                         "------------------------------------\n"
                         f"DATA / COUNTRY           : {country}\n"
                         f"FEATURES_LIST            : {features_list}\n"
                         f"SINGLE_FEATURES_LIST     : {single_features_list}\n"
+                        f"LSTM_FEATURES_LIST       : {lstm_features_list}\n"
                         f"FEATURES_MODE            : {features_mode}\n"
                         "------------------------------------\n"
                         f"PATHS AND DIRECTORIES\n"
@@ -214,17 +223,17 @@ def config_logging_to_txt(results_subdir,
                         f"PREPROCESSED_DATA_FILE   : {preprocessed_data_file}\n"
                         f"RESULTS_DIR              : {results_subdir}\n"
                         f"TRAINED_MODEL_DIR        : {trained_subdir}\n"
-                        "------------------------------------\n"
-                        f"HYPERPARAMETER TUNING\n"
-                        "------------------------------------\n"
-                        f"now_hptuning              : {now_hptuning}\n"
-                        f"only_hptuning             : {only_hptuning}\n"
-                        f"--parameters to tune--\n"
-                        f"GAMMA_LIST                : {gamma_list}\n"
-                        f"GAE_LAMBDA_LIST           : {gae_lam_list}\n"
-                        f"CLIP_EPSILON_LIST         : {clip_list}\n"
-                        f"CRITIC_LOSS_COEF_LIST     : {critic_loss_coef_hpt}\n"
-                        f"ENTROPY_LOSS_COEF_LIST    : {entropy_loss_coef_hpt}\n"
+                        #"------------------------------------\n"
+                        #f"HYPERPARAMETER TUNING\n"
+                        #"------------------------------------\n"
+                        #f"now_hptuning              : {now_hptuning}\n"
+                        #f"only_hptuning             : {only_hptuning}\n"
+                        #f"--parameters to tune--\n"
+                        #f"GAMMA_LIST                : {gamma_list}\n"
+                        #f"GAE_LAMBDA_LIST           : {gae_lam_list}\n"
+                        #f"CLIP_EPSILON_LIST         : {clip_list}\n"
+                        #f"CRITIC_LOSS_COEF_LIST     : {critic_loss_coef_hpt}\n"
+                        #f"ENTROPY_LOSS_COEF_LIST    : {entropy_loss_coef_hpt}\n"
                         )
 
     if settings.STRATEGY_MODE == "ppoCustomBase":
@@ -291,8 +300,9 @@ def custom_logger(seed: int,
 def get_data_params(final_df: pd.DataFrame,
                     feature_cols: list = [],
                     single_feature_cols: list = [],
+                    lstm_cols: list = [],
                     asset_name_column="tic",
-                    ) -> list:
+                    ):
     """
     Get some parameters we need, based on the final pre-processed dataset:
         number of individual assets (n_individual_assets)
@@ -307,5 +317,14 @@ def get_data_params(final_df: pd.DataFrame,
     n_features = len(feature_cols)
     n_single_features = len(single_feature_cols)
 
-    return [n_individual_assets, n_features, n_single_features]
+    # for lstm features: # get intersection between whole features list and lstm list to find lstm asset features
+    set_features_cols = set(feature_cols)
+    lstm_features_cols = list(set_features_cols.intersection(lstm_cols))
+    n_features_lstm = len(lstm_features_cols)
+    # for lstm single features # get intersection between single feature list and lstm list to find single lstm features
+    set_single_feature_cols = set(single_feature_cols)
+    lstm_single_features_cols = list(set_single_feature_cols.intersection(lstm_cols))
+    n_single_features_lstm = len(lstm_single_features_cols)
+
+    return n_individual_assets, n_features, n_single_features, n_features_lstm, n_single_features_lstm
 

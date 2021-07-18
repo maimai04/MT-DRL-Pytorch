@@ -7,39 +7,48 @@ from itertools import chain
 import gym
 import torch
 from gym import spaces
-
-# import own libraries
-#try:
-#    from config.config import *
-#except:
-#    from config import *
 from torch import nn
 
 
+
 class FinancialMarketEnv(gym.Env):
-    """A stock trading environment for OpenAI gym
+    """
+    This class implements the stock trading environment for thiw work. It suclasses the gym.Env class from
+    OpenAI Gym. Note that this just means that the class meets some basic Gym standards, such that it has
+    certain methods mandatory implemeted, namely: step, reset, render
+
+    Stable baselines has a guide of how to create a stock trading environment:
+    A stock trading environment for OpenAI gym
     see also: https://stable-baselines.readthedocs.io/en/master/guide/custom_env.html
     complete guide on how to create a custom env. with OpenAI gym :
               https://github.com/openai/gym/blob/master/docs/creating-environments.md
+
+    This environment was initially inherited from:
+    Yang et al. (2020): Deep Reinforcement Learning for Automated Stock Trading: An Ensemble Strategy
+
+    Everything was changed except from the way the
     """
     metadata = {'render.modes': ['human']}
 
     def __init__(self,
-                 # whole train / validation or test dataset
+                 # whole dataset to use in env: train, validation or test dataset
                  df: pd.DataFrame,
-                 # for how the actions should be converted to buy / sell actions
+                 # version for how the actions should be converted to buy / sell actions (see config file)
                  step_version,
-
-                 # number of assets
+                 # number of stocks
                  assets_dim: int,
                  # how long the observation vector should be for one day;
                  # n_stocks*n_features_per_stock+ n_stocks(for saving asset holdings) + n_other_features (if any) + 1 (for cash position)
                  shape_observation_space: int,
+                 # note: this is always passed even if we don't actually use the lstm
+                 shape_lstm_observation_space: int,
                  # where results should be saved
                  results_dir: str,
-                 # list of features names to be used
+                 # list of features names, single feature names and lstm feature names (optional, only if applicable) to be used
                  features_list: list = [],
                  single_features_list: list = [],
+                 # note: this is always passed even if we don't actually use the lstm
+                 lstm_features_list: list = [],
                  # day (index) from which we start
                  day: int = 0,
                  # whether it is the validation, train or test env; there are some minor differences,
@@ -87,7 +96,8 @@ class FinancialMarketEnv(gym.Env):
                  # penalty for rebalancing
                  rebalance_penalty: float=None,
                  # the measure for reward
-                 reward_measure: str = "addPFVal"
+                 reward_measure: str = "addPFVal",
+                 total_episodes_to_train: int=10,
                  ):
         # we call the init function in the class gym.Env
         super().__init__()
@@ -97,7 +107,6 @@ class FinancialMarketEnv(gym.Env):
         ...
         """
         self.logger = logger
-        ##### INPUT VARIABLES TO THE CLASS
         self.reset_counter = reset_counter
         self.final_state_counter = final_state_counter
         self.steps_counter = steps_counter
@@ -106,6 +115,7 @@ class FinancialMarketEnv(gym.Env):
         self.df = df.copy()
         self.features_list = features_list
         self.single_features_list = single_features_list
+        self.lstm_features_list = lstm_features_list
         self.firstday = day
         self.day = day
         self.model_name = model_name
@@ -121,6 +131,7 @@ class FinancialMarketEnv(gym.Env):
         self.reward_scaling = reward_scaling
         self.assets_dim = assets_dim
         self.shape_observation_space = shape_observation_space
+        self.shape_lstm_observation_space = shape_lstm_observation_space
 
         self.price_colname = price_colname
         self.results_dir = results_dir
@@ -130,6 +141,8 @@ class FinancialMarketEnv(gym.Env):
         self.step_version = step_version
         self.rebalance_penalty = rebalance_penalty
         self.reward_measure = reward_measure
+        # used for saving only at the end of training (else not enough storage on laptop)
+        self.total_episodes_to_train = total_episodes_to_train
 
         ##### CREATING ADDITIONAL VARIABLES
         # action_space normalization and shape is assets_dim
@@ -139,10 +152,11 @@ class FinancialMarketEnv(gym.Env):
         # we change the action space; instead from -1 to 1, it will go from 0 to 1
         # Note: this only affects the clipping we might do in the PPO agent.
         self.action_space = spaces.Box(low=-1, high=1, shape=(self.assets_dim,))
-        # Note: in the ensemble paper, they had an observation space fro 0 to inf,
-        # but this doesn't make sense since some values of their observation space were definitiely <0.
-        # So I don't know if stable baselines did some clipping on the observation space there but I don't,
-        # still I have changed the space to [-inf: +inf]
+        # Note: in the ensemble paper, they had an observation space from 0 to inf,
+        # but this doesn't make sense since some values of their observation space were definitively <0.
+        # So I don't know if stable baselines did some clipping on the observation space there which might have affected the performance.
+        # I don't do any clipping on the observation space, hence these boundaries don't affect my algorithm;
+        # still, to be exact, I have changed the space to [-inf: +inf]
         self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(self.shape_observation_space,))
 
         ##### INITIALIZING VARIABLES
@@ -153,31 +167,32 @@ class FinancialMarketEnv(gym.Env):
         # initializing state for current day:
         # current cash balance is the initial cash balance
         self.current_cash_balance = self.initial_cash_balance
-        # number of asset holdings and asset qeuity weights are each a vector of zeroes with the same length as number of assets (one place for each asset)
+        # number of asset holdings and asset equity weights are each a vector of zeroes with the same length as number of assets
+        # (one place for each asset)
         self.current_n_asset_holdings = [0] * self.assets_dim
         # weights are a bit "special"; because they change twice in a state transition;
         # first, when we rebalance our portfolio, we change our weights but with the old asset prices
-        # second, when the we get the new day / state and observe the new asset prices, the (money-) weights o our assets change again
+        # second, when the we get the new day / state and observe the new asset prices, the (money-) weights of our assets change again
         # here, we only record the (money-)weights of each asset at the beginning of the day, meaning: after both changes mentioned above
         # so we start with weights of 0; the next state will be n_asset_holdings*new_asset_price / (equity portfolio value)
         self.current_asset_equity_weights_startofday = [0] * self.assets_dim
-        # then it is also interesting to track how the weights of all stocks change compared to the whole pf value (incl, cash)
+        # then it is also interesting to track how the weights of all stocks change compared to the whole pf value (including cash)
         # and how much weight cash has in the portfolio, hence we create a vector of zeroes of length n_assets + 1 (for cash)
         # the last list entry will be for cash
         self.current_cash_weight = 1
         self.current_all_weights_startofday = [0] * self.assets_dim + [self.current_cash_weight]
+
         # in order to have it simpler to query, I created a dictionary for the state, where all the things to be saved
         # are put in there and accessible by "keyname"
-
-        # Note: in the paper, they use Cash position and numbe rof asset holdings in the state vector.
-        # in my own version, I use the cash weights and the asset weights instead, since my outputted actions are also
-        # interpreted as weights and hence I think this makes more sense
+        # Note: in step_version of the paper, they use Cash position and number of asset holdings in the state vector.
+        # in my own version (newNoShort), I use the cash weights and the asset weights instead, since my outputted actions are also
+        # interpreted as weights and hence I think this makes more sense (see documentation in written part of thesis)
         if self.step_version == "paper":
             self.state = {"cash": [self.current_cash_weight],
                           "n_asset_holdings": self.current_n_asset_holdings}
         elif self.step_version == "newNoShort":
             self.state = {"cash_w": [self.current_cash_weight],
-                          "asset_w": self.current_all_weights_startofday[:-1]}
+                          "asset_w": self.current_all_weights_startofday[:-1]} # adding all but cash weight (which is the final entry)
 
         # if we are at the first time step of the episode, we get the asset names (don't need to do this at every step, but we could)
         if self.steps_counter == 0:
@@ -191,7 +206,7 @@ class FinancialMarketEnv(gym.Env):
             elif self.step_version == "newNoShort":
                 self.state_header = ["cash_w"] + [s + "_w" for s in self.asset_names]
 
-        # for each feature in the features list we passed in the init, we update the dictionary for thie current day;
+        # for each feature in the features list we passed in the init, we update the state dictionary for this current day;
         # we update the state dict with the features
         for feature in self.features_list:
             self.state.update({feature: self.data[feature].values.tolist()})
@@ -208,6 +223,9 @@ class FinancialMarketEnv(gym.Env):
             if self.iteration == 1 and self.steps_counter == 0:
                 self.state_header += ["vixDiv100"]
 
+        # create lstm state as a subset of the state
+        self.lstm_state = dict((k, self.state[k]) for k in self.lstm_features_list if k in self.state)
+        self.lstm_state_flattened = np.asarray(list(chain(*list(self.lstm_state.values()))))
         # create flattened state_flattened (because we need to pass the sttae as np.array to the model
         # so it can create a torch tensor (cannpt use a dict)
         self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
@@ -249,16 +267,16 @@ class FinancialMarketEnv(gym.Env):
     def step(self, actions) -> list:
         """
         This function is used for the agent to take a step in the environment and hence to make a
-        transitio from one state to the other state, using actions provided by the RL agent.
+        transition from one state to the other state, using actions provided by the RL agent.
 
-        First, we chneck if we are in the terminal state of the episode (done=True) or not.
+        First, we check if we are in the terminal state of the episode (done=True) or not.
             If we are in the terminal state, we don't take any actions anymore, but just return the final state and reward,
                     and save the results (memory and state vector) to csv files
-            If we are not in the terminal state, we actually take a ste using the actions provided by the agent,
+            If we are not in the terminal state, we actually take a step using the actions provided by the agent,
                     then the environment samples and returns the next state and a reward
 
         methods:
-        _save_results()     : saving results to csv at the end of the episode.
+        _save_results()     : saving results to csv at the end of the episode, if terminap=True
         _terminate()        : this function is called if we are in the terminal state of the episode;
                               we then append the last data to the memory dictionary and call the _save_results() function
                               (if save_results == True).
@@ -267,13 +285,11 @@ class FinancialMarketEnv(gym.Env):
         _calculate_reward   : Inputs: end_portfolio_value: float=None, begin_portfolio_value: float=None
                               This function calculates the reward, depending on the calculation method specified
                               in config.py under settings.REWARD_MEASURE.
-        _sell_stock()       : selling stocks
-        _buy_stock()        : buying stocks
 
         @param actions: np.array of actions, provided by the agent
         @return: self.state: np.array, self.reward: float, self.terminal_state: bool, {}
         """
-        def _get_sharpe_ratio(window="full") -> float:
+        def _get_sharpe_ratio(window="full") -> float: # todo: rm
             """
             This function is used to calculate the sharpe ratio for the current episode either at the
             end of the episode (for hyperparameter tuning) or at the end of each day if
@@ -322,67 +338,85 @@ class FinancialMarketEnv(gym.Env):
             # SAVING MEMORIES TO CSV
             # save dates vector alone to results (for debugging, analysis, plotting...)
             dates = pd.DataFrame({"datadate": self.memories["datadates"]})
-            dates.to_csv(os.path.join(self.results_dir, "datadates",
-                                        f"datadates"
-                                        f"_{self.mode}"
-                                        f"_{self.model_name}"
-                                        f"_ep{self.iteration}" # episode
-                                        f"_totalSteps_{self.steps_counter}"
-                                        f"_finalStateCounter_{self.final_state_counter}"
-                                        f".csv"))
+            #dates.to_csv(os.path.join(self.results_dir, "datadates",
+            #                            f"datadates"
+            #                            f"_{self.mode}"
+            #                            f"_{self.model_name}"
+            #                            f"_ep{self.iteration}" # episode
+            #                            f"_totalSteps_{self.steps_counter}"
+            #                            f"_finalStateCounter_{self.final_state_counter}"
+            #                            f".csv"))
             # if we are at the last step of the first episode, save header (stays the same for whole run,
             # # so no need to save again every time)
             if self.iteration == 1:
                 pd.DataFrame(self.memories["state_header"]).\
                         to_csv(os.path.join(self.results_dir, "state_memory", "state_header.csv"))
-            # then, for each data entry in the memories dictionary, we save together with the corresponding dates to csv
-            for key in list(self.memories.keys()):
-                # create pandas df for each key (except for datadate and state_header, because we already saved them before
-                if key not in ["datadate", "state_header"]:
-                    keydf = pd.DataFrame(self.memories[key])
-                # "try" allows us to "try if the following operation works", and if it doesn't, there is no error,
-                # instead the "exception" is called (except) and the program can continue to run.
-                try:
-                    # if each element in a key is a list and of same length as the asset names list,
-                    # we know that each list element belongs to one of the assets and want to name each column after one.
-                    # we use the function "try", because the comparison does not work if it is not a list / array.
-                    if len(self.memories[key][0]) == len(self.asset_names):
-                        keydf.columns = self.asset_names
-                    # if each element i a key has the same length as asset names + 1 then the key is going to be the
-                    # asset + cash weights key, so we want the header to be asset names + cash
-                    if len(self.memories[key][0]) == len(self.asset_names)+1:
-                        keydf.columns = list(self.asset_names) + ["Cash"]
-                except:
-                    pass
-                # if the key is "state_memory" and we are in the first episode,
-                # we want the state_header to be the column names of the state memory
-                if key == "state_memory" and self.iteration == 1:
-                    keydf.columns = self.memories["state_header"]
-                # concatenate each key df (except for "datadate" and "state header", which were saved separately)
-                # with the dates df and save to csv
-                if key not in ["datadate", "state_header"]:
-                    pd.concat([dates, keydf], axis=1).to_csv(os.path.join(self.results_dir, key,
-                                                                      f"{key}"
+
+            # in test mode, we only test once on the data, so we save always.
+            # if we are not in test mode (train, validation), we train / validate for self.total_episodes_to_train times,
+            # which can be a lot to save and we don't actually want all those intermediate .csv files (I don't even have enough free storage on my laptop)
+            # so we only save at the end of training / validation and in the beginning (for debugging purposes)
+            if self.mode == "test" or self.final_state_counter > self.total_episodes_to_train:
+                # then, for each data entry in the memories dictionary, we save together with the corresponding dates to csv
+                for key in list(self.memories.keys()):
+                    # create pandas df for each key (except for datadate and state_header, because we already saved them before
+                    if key not in ["datadates", "state_header"]:
+                        keydf = pd.DataFrame(self.memories[key])
+                    # "try" allows us to "try if the following operation works", and if it doesn't, there is no error,
+                    # instead the "exception" is called (except) and the program can continue to run.
+                    try:
+                        # if each element in a key is a list and of same length as the asset names list,
+                        # we know that each list element belongs to one of the assets and want to name each column after one.
+                        # we use the function "try", because the comparison does not work if it is not a list / array.
+                        if len(self.memories[key][0]) == len(self.asset_names):
+                            keydf.columns = self.asset_names
+                        # if each element i a key has the same length as asset names + 1 then the key is going to be the
+                        # asset + cash weights key, so we want the header to be asset names + cash
+                        if len(self.memories[key][0]) == len(self.asset_names)+1:
+                            keydf.columns = list(self.asset_names) + ["Cash"]
+                    except:
+                        pass
+                    # if the key is "state_memory" and we are in the first episode,
+                    # we want the state_header to be the column names of the state memory
+                    if key == "state_memory" and self.iteration == 1:
+                        keydf.columns = self.memories["state_header"]
+                    # concatenate each key df (except for "datadate" and "state header", which were saved separately)
+                    # with the dates df and save to csv
+                    if key not in ["datadates", "state_header"]:
+                        pd.concat([dates, keydf], axis=1).to_csv(os.path.join(self.results_dir, key,
+                                                                          f"{key}"
+                                                                          f"_{self.mode}"
+                                                                          f"_{self.model_name}"
+                                                                          f"_ep{self.iteration}"
+                                                                          f"_totalSteps_{self.steps_counter}"
+                                                                          f"_finalStateCounter_{self.final_state_counter}.csv"))
+            # save rewards separately because we want to save all validation rewards so we can later plot rewards vs. timesteps
+            if self.mode == "validation":
+                keydf = pd.DataFrame(self.memories["rewards"])
+                pd.concat([dates, keydf], axis=1).to_csv(os.path.join(self.results_dir, "rewards",
+                                                                      f"rewards"
                                                                       f"_{self.mode}"
                                                                       f"_{self.model_name}"
                                                                       f"_ep{self.iteration}"
                                                                       f"_totalSteps_{self.steps_counter}"
                                                                       f"_finalStateCounter_{self.final_state_counter}.csv"))
+
             return None
 
         def _terminate() -> list:
             self.final_state_counter += 1
             self.memories["exercised_actions"].append([0] * self.assets_dim)  # because no actions exercised in this last date anymore
-            self.memories["transaction_cost"].append(0)  # since no transaction on this day, no transaction costcost
+            self.memories["transaction_cost"].append(0)  # since no transaction on this day, no transaction cost
             self.memories["sell_trades"].append(0)
             self.memories["buy_trades"].append(0)
             # SAVING MEMORIES TO CSV
             if self.save_results == True:
                 _save_results()
             sharpe_ratio = {}
-            if self.calculate_sharpe_ratio == True:
+            if self.calculate_sharpe_ratio == True: # todo: rm
                 sharpe_ratio = _get_sharpe_ratio()
-            return [self.state_flattened, self.reward, self.terminal_state, sharpe_ratio]
+
+            return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, sharpe_ratio]
 
         def _calculate_reward(end_portfolio_value: float=None, begin_portfolio_value: float=None):
             if self.reward_measure == "addPFVal":
@@ -390,13 +424,14 @@ class FinancialMarketEnv(gym.Env):
                 # apply reward scaling to make rewards smaller
                 self.reward = self.reward * self.reward_scaling
 
-            elif self.reward_measure == "SR7": # 7 day sharpe ratio (non-annualized)
+            elif self.reward_measure == "SR7": # 7 day sharpe ratio (non-annualized) # todo: rm
                 if self.steps_counter >= self.performance_calculation_window-1:
                     self.reward = _get_sharpe_ratio(window=self.performance_calculation_window)
                 else:
                     self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001)) # added very small number to prevent div. by 0
 
-            elif self.reward_measure == "logU": # log Utility(new F value / old PF value) as proposed by Neuneier 1997
+            elif self.reward_measure == "logU":
+                # log Utility(new F value / old PF value) as proposed by Neuneier 1997
                 self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
 
             elif self.reward_measure == "semvarPenalty":
@@ -429,19 +464,21 @@ class FinancialMarketEnv(gym.Env):
                 begin_n_asset_holdings = self.state["n_asset_holdings"]
 
             elif self.step_version == "newNoShort":
-                # in the custom version, we take the values from the memory instead, because the cash value and asset holdings are not in the state vector
+                # in the custom version, we take the values from the memory instead, because the cash value and asset
+                # holdings are not in the state vector
                 begin_cash_value = self.memories["cash_value"][-1]
                 begin_n_asset_holdings = self.memories["number_asset_holdings"][-1]
 
+            # asset pricing at the beginning of the day, before taking the action
             begin_asset_prices = self.data[self.price_colname].values.tolist()
+            # portfolio value in the beginning, before taking the action
             begin_portfolio_value = begin_cash_value + sum(np.array(begin_asset_prices) * np.array(begin_n_asset_holdings))
 
             ################################################################################################
             ### TAKE A STEP,
             ### (WITHIN THE CURRENT STATE, BEFORE THE ENVIRONMENT SAMPLES A NEW STATE)
             ################################################################################################
-            # we sort the actions such that they are in this order [-large, ..., +large]
-            # and we get the "indizes" of at which position in the original actions array the sorted actions were
+            # and we get the "indices" of at which position in the original actions array the sorted actions were
             if self.step_version == "paper":
                 # So the actions from the model come out in the range of, like, -2, ..., +2 plus/minus
                 # and then they are reshaped to the action space we have defined in the environment (reshaping is done in the ppo algorithm)
@@ -468,6 +505,7 @@ class FinancialMarketEnv(gym.Env):
                 # and while the last thing, we cannot reall ydo something about, it is always good to let the "information gap" between agent and what comes out
                 # of the action be as small as possible, hence the agent does not "know" how to attribute a reward (good weights, market luck, god weights but could not exercise)
 
+                # we sort the actions such that they are in this order [-large, ..., +large]
                 # then they sort into sell and buy actions
                 argsort_actions = np.argsort(actions)
                 # get assets to be sold (if action -)
@@ -507,12 +545,10 @@ class FinancialMarketEnv(gym.Env):
                 # and also, we have some spare cash freed uü in case we want to rebalance in the next period.
                 target_weights = actions
 
-                #print("target_weights")
-                #print(target_weights)
                 # rebalancing weight = new weights - current weights (weights taken as asset weights / all asset value, including cash,
                 # # because otherwise we would end up never buying anything (because initially, all stocks value = 0, cash value = pf value = 1000000)
-                # [-1]: we take the last list / array that was apended
-                # [:-1], we take all the stock weights except for the cas weight (which is at the end, as the key name indicates)
+                # [-1]: we take the last list / array that was appended
+                # [:-1], we take all the stock weights except for the cash weight (which is at the end, as the key name indicates)
                 # delta_weight = new_weight (vector) - old_weights (vector)
                 delta_weight = target_weights - self.memories["all_weights_cashAtEnd"][-1][:-1]
 
@@ -644,6 +680,9 @@ class FinancialMarketEnv(gym.Env):
                 # we don't want them to appear n_asset times in the state
                 self.state.update({feature: [self.data[feature].values[0]]})
 
+            # create lstm state
+            self.lstm_state = dict((k, self.state[k]) for k in self.lstm_features_list if k in self.state)
+            self.lstm_state_flattened = np.asarray(list(chain(*list(self.lstm_state.values()))))
             # create flattened state (because we need to pass a np.array to the model which then converts it to a tensor,
             # cannot use a dictionary; but the dictionary is practical for querying and not loosing the overview of what is where)
             self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
@@ -666,12 +705,14 @@ class FinancialMarketEnv(gym.Env):
             self.cost = 0
             self.sell_trades = 0
             self.buy_trades = 0
-            return [self.state_flattened, self.reward, self.terminal_state, {}]
+            return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, {}]
 
 
         ####################################
         #    MAIN CODE FOR STEP FUNCTION   #
         ####################################
+        # actions are in this form: [[1,2,3,4..]], need to reshape to [1,2,3,4,...]
+        actions = actions.flatten()
         # save policy actions (actions) to memories dict (these are the actions given by the agent, not th actual actions taken)
         self.memories["policy_actions"].append(actions)
         # FIRST: CLIP / TRANSFORM ACTIONS to the range allowed by our objective /resp. the action space
@@ -960,6 +1001,8 @@ class FinancialMarketEnv(gym.Env):
                 if self.iteration == 1 and self.steps_counter == 0:
                     self.state_header += ["vixDiv100"]
 
+            self.lstm_state = dict((k, self.state[k]) for k in self.lstm_features_list if k in self.state)
+            self.lstm_state_flattened = np.asarray(list(chain(*list(self.lstm_state.values()))))
             # create flattened state_flattened
             self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
 
@@ -1044,9 +1087,10 @@ class FinancialMarketEnv(gym.Env):
                 # we don't want them to appear n_asset times in the state
                 self.state.update({feature: [self.data[feature].values[0]]})
 
+            self.lstm_state = dict((k, self.state[k]) for k in self.lstm_features_list if k in self.state)
+            self.lstm_state_flattened = np.asarray(list(chain(*list(self.lstm_state.values()))))
             # create flattened state
             self.state_flattened = np.asarray(list(chain(*list(self.state.values()))))
-
 
 
             ##### INITIALIZE MEMORIES / MEMORY TRACKERS
@@ -1064,7 +1108,7 @@ class FinancialMarketEnv(gym.Env):
                              "sell_trades": [],
                              "buy_trades": [],
                              "state_memory": [self.state_flattened]}
-        return self.state_flattened
+        return self.state_flattened, self.lstm_state_flattened
 
     def return_reset_counter(self) -> int:
         return self.reset_counter
@@ -1087,5 +1131,5 @@ class FinancialMarketEnv(gym.Env):
         self.state.update({"portfolio_value": [self.memories["portfolio_value"][-1]]})
         #print("self.state (dict)")
         #print(self.state)
-        return self.state_flattened, self.state, self.observed_asset_prices_list, \
+        return self.state_flattened, self.lstm_state_flattened, self.state, self.observed_asset_prices_list, \
                self.reset_counter, self.final_state_counter, self.steps_counter

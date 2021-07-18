@@ -26,9 +26,9 @@ class settings:
     STRATEGY_MODE = "ppoCustomBase"
 
     #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
-    REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
+    #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
-    #REWARD_MEASURE = "semvarPenalty"
+    REWARD_MEASURE = "semvarPenalty"
 
     RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
     #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
@@ -109,6 +109,9 @@ class data_settings:
     RISK_INDICATORS = ["ret_vola_21d"] # 21 days volatility and daily vix (divide by 100)
     SINGLE_FEATURES = ["vixDiv100"] # not attached to a certain asset
 
+    # only applied if lstm net arch chosen
+    LSTM_FEATURES = RETURNS_FEATURES + SINGLE_FEATURES
+
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
     FEATURES_MODE = "fm3"
 
@@ -116,26 +119,29 @@ class data_settings:
     if FEATURES_MODE == "fm1":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES
         SINGLE_FEATURES_LIST = []
+        LSTM_FEATURES_LIST = LSTM_FEATURES
     elif FEATURES_MODE == "fm2": # features version of the ensemble paper
         FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS #+ RETURNS_FEATURES
         SINGLE_FEATURES_LIST = []
+        LSTM_FEATURES_LIST = LSTM_FEATURES
     elif FEATURES_MODE == "fm3":
         FEATURES_LIST = PRICE_FEATURES + RETURNS_FEATURES + TECH_INDICATORS + RISK_INDICATORS
         SINGLE_FEATURES_LIST = SINGLE_FEATURES
+        LSTM_FEATURES_LIST = LSTM_FEATURES
     elif FEATURES_MODE == "fm4":
         pass
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    STEP_VERSION = "paper"
-    #STEP_VERSION = "newNoShort"
+    #STEP_VERSION = "paper"
+    STEP_VERSION = "newNoShort"
 
     # ---------------LEAVE---------------
     if STEP_VERSION == "newNoShort":
         HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = None  # This is 0.0001.
-        REBALANCE_PENALTY = 0.2
+        REBALANCE_PENALTY = 0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
     elif STEP_VERSION == "paper":
         HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = 1e-4  # This is 0.0001.
@@ -147,53 +153,6 @@ class env_params:
 class agent_params:
     # ---------------SET MANUALLY---------------
     class ppo: # from stable baselines # todo: rm
-        """
-        POLICY          : policy network type, can be passed as str (if registered) or as instance,
-                          e.g. if custom policy is used
-                          "MlpPolicy": multiple linear perceptrons, standard neural network
-
-        ENT_COEF        : entropy coefficient, how much we weight the entropy loss in the
-        GAMMA           : discount factor
-        LEARNING_RATE   : can also be variable, e.g. a function of the current progress remaining etc.
-        N_STEPS         : number of steps the agent should take in the environment
-                          The number of steps to run for each environment per update
-                          (i.e. rollout buffer size is n_steps * n_envs where n_envs is number of environment copies running in parallel)
-                          NOTE: n_steps * n_envs must be greater than 1 (because of the advantage normalization)
-                          See https://github.com/pytorch/pytorch/issues/29372
-        BATCH_SIZE      : Optional[int] = 64, minibatch size
-        N_EPOCHS        : number of epochs when optimizing the surrogate loss
-        GAE_LAMBDa      : factor for trade-off of bias vs. variance for generalized advantage estimator
-        CLIP_RANGE_VF   : clipping parameter for the value function
-                          can be a function of current progress remaining (from 1 to 0)
-                          NOTE: this parameter is specific to the OpenAI implementation
-                          If None (default), no clipping will be one on the value function
-                          IMPORTANT: this clipping depends on the reward scaling.
-        CLIP_RANGE      : clipping parameter
-                          can be a function of current progress remaining (from 1 to 0)
-        VF_COEF         : value function coefficient for the loss calculation
-        MAX_GRAD_NORM   : The maximum value for the gradient clipping
-        USE_SDE         : Whether to use generalized State Dependent Exploration (gSDE)
-                          instead of action noise exploration (default: False) # todo: ?
-        SDE_SAMPLE_FREQ : Sample a new noise matrix every n steps when using gSDE
-                          Default: -1 (only sample at the beginning of the rollout)
-        TARGET_KL       : Limit the KL divergence between updates,
-                          because the clipping is not enough to prevent large update
-                          see issue #213, (cf https://github.com/hill-a/stable-baselines/issues/213)
-                          By default, there is no limit on the kl div.
-        TENSORBOARD_LOG : the log location for tensorboard (if None, no logging)
-        CREATE_EVAL_ENV : Whether to create a second environment that will be used for evaluating
-                          the agent periodically. (Only available when passing string for the environment)
-        POLICY_KWARGS   : additional arguments to be passed to the policy on creation
-        VERBOSE         : the verbosity level of logging: 0 no output, 1 info, 2 debug
-        DEVICE          : DEVICE – DEVICE (cpu, cuda, ..., auto) on which the code should be run.
-                          Setting it to auto, the code will be run on the GPU if possible.
-        _INIT_SETUP_MODEL:
-
-        Note: the parameters from the paper were default parameters from stable_baselines3, which were
-        (I guess # todo: check)
-        tune by the people from stable-baselines on stable-baselines zoo environment(s) # todo: find out which one
-        Therefore, the parameters need to be tuned for the current evironment as well # todo!
-        """
         ##### FEATURE EXTRACTOR & POLICY & VALUE NETWORKS
         # multiple linear perceptrons
         POLICY = 'MlpPolicy' # CustomMlp # CustomLSTM
@@ -259,28 +218,30 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        NET_VERSION = "mlp_separate"
+        #NET_VERSION = "mlp_separate" # todo: rm
+        #NET_VERSION = "mlplstm_separate" # todo: rm
+
         #NET_VERSION = "mlp_shared"
-        #NET_VERSION = "mlplstm_separate"
+        NET_VERSION = "mlplstm_shared"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
         NUM_EPOCHS = 10
         OPTIMIZER = torch.optim.Adam
-        OPTIMIZER_LEARNING_RATE = 0.001 #0.00025
+        OPTIMIZER_LEARNING_RATE = 0.00025 #0.001
         GAMMA = 0.99
         GAE_LAMBDA = 0.95
         CLIP_EPSILON = 0.2 #0.5#0.2
         CRITIC_LOSS_COEF = 0.5
-        ENTROPY_LOSS_COEF = 0.01 #0.01
+        ENTROPY_LOSS_COEF = 0.005 #0.01 #0.01
         MAX_GRADIENT_NORMALIZATION = 0.5
-        MAX_KL_VALUE = None # not implemented # todo: rm
+        MAX_KL_VALUE = None # not implemented
 
         ### LEARNING PARAMETERS
         TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
         #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
-        TOTAL_EPISODES_TO_TRAIN_BASE = 60 #10 # for initial training, later a little bit less if retrain==True)
-        TOTAL_EPISODES_TO_TRAIN_CNT = TOTAL_EPISODES_TO_TRAIN_BASE-20
+        TOTAL_EPISODES_TO_TRAIN_BASE = 3#50#60 #10 # for initial training, later a little bit less if retrain==True)
+        TOTAL_EPISODES_TO_TRAIN_CNT = 1#TOTAL_EPISODES_TO_TRAIN_BASE-10
 
 class paths:
     # ---------------LEAVE---------------
@@ -316,7 +277,7 @@ class paths:
     # ---------------LEAVE---------------
     PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{settings.DATASET}.csv")
 
-class hptuning_config:
+class hptuning_config: # todo: rm
     # if you want to tune hyperparameter before the run (takes many hours)
     #now_hptuning = True
     now_hptuning = False

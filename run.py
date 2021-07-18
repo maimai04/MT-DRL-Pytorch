@@ -32,6 +32,7 @@ if __name__ == "__main__":
     seeds_list = settings.SEEDS_LIST
     features_list = data_settings.FEATURES_LIST
     single_features_list = data_settings.SINGLE_FEATURES_LIST
+    lstm_features_list = data_settings.LSTM_FEATURES_LIST
 
     # DATA SETTINGS
     date_column_name = data_settings.DATE_COLUMN
@@ -106,6 +107,8 @@ if __name__ == "__main__":
                                            features_mode=features_mode,
                                            run_mode=run_mode,
                                            reward_measure=reward_measure,
+                                           net_version=net_version,
+                                           env_step_version=env_step_version,
                                            )
 
     # create saving path and directory for loggings
@@ -131,6 +134,7 @@ if __name__ == "__main__":
                           startdate_backtesting_bear = startdate_backtesting_bear,
                           enddate_backtesting_bear = enddate_backtesting_bear,
                           env_step_version = env_step_version,
+                          rebalance_penalty=rebalance_penalty,
                           hmax_normalize = hmax_normalize,
                           initial_cash_balance = initial_cash_balance,
                           transaction_fee = transaction_fee,
@@ -138,6 +142,7 @@ if __name__ == "__main__":
                           country = country,
                           features_list = features_list,
                           single_features_list = single_features_list,
+                          lstm_features_list=lstm_features_list,
                           features_mode =features_mode,
                           data_path = data_path,
                           raw_data_path = raw_data_path,
@@ -193,18 +198,19 @@ if __name__ == "__main__":
     data.index = data[date_column_name].factorize()[0]
 
     # get parameters about dataframe shape (we need this information to feed it to the environment later)
-    # todo: n_features maybe not needed
-    assets_dim, n_features, n_single_features = \
+    assets_dim, n_features, n_single_features, n_features_lstm, n_single_features_lstm = \
         get_data_params(final_df=data,
                         asset_name_column="tic",
                         feature_cols=features_list,
                         single_feature_cols=single_features_list,
+                        lstm_cols=lstm_features_list,
                         #date_column=data_settings.DATE_COLUMN,
                         #base_cols=data_settings.BASE_DF_COLS,
                         )
     # Define the shape of the observation space (this we also need to provide to the environment to create the state space)
     # Shape = [Current Balance]+[prices 1-30]+[owned shares 1-30] +[macd 1-30]+ [rsi 1-30] + [cci 1-30] + [adx 1-30]
     shape_observation_space = n_features * assets_dim + assets_dim + 1 + n_single_features # +1 for cash
+    shape_lstm_observation_space = n_features_lstm * assets_dim + n_single_features_lstm
 
     # we want to be able to summarize some metrics / üerformance metrics and plot some plots
     # for all seeds together (e.g. make a plot of changes in portfolio value vs. time for each seed in order to compare,
@@ -223,6 +229,7 @@ if __name__ == "__main__":
     common_logger.info(f"(main) Shape of Dataframe (unique dates, columns) : ({len(data.index.unique())}, {len(data.columns)})")
     # logging.info("(main) number of validation trading dates: " + str(len(unique_trade_dates_validation)))
     common_logger.info("(main) shape observation space: " + str(shape_observation_space))
+    common_logger.info("(main) shape lstm observation space: " + str(shape_lstm_observation_space))
     common_logger.info(f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
 
     # begin the run count (one whole run per seed)
@@ -259,6 +266,8 @@ if __name__ == "__main__":
                                    trained_dir=trained_subdir,
                                    assets_dim=assets_dim,
                                    shape_observation_space=shape_observation_space,
+                                   shape_lstm_observation_space=shape_lstm_observation_space,
+
                                    logger=logger,
                                    strategy_mode=strategy_mode,
                                    seed=seed,
@@ -301,6 +310,7 @@ if __name__ == "__main__":
                                    reward_measure=reward_measure,
                                    features_list=features_list,
                                    single_features_list=single_features_list,
+                                   lstm_features_list=lstm_features_list,
         )
 
 
