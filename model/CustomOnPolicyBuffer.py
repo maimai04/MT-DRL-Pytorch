@@ -35,6 +35,8 @@ class OnPolicyBuffer():
         self.obs_shape = obs_shape  # Tuple[int, int]
         if lstm_obs_shape == None:
             self.lstm_obs_shape = obs_shape
+        else:
+            self.lstm_obs_shape = lstm_obs_shape
 
         self.actions_number = actions_number
 
@@ -43,8 +45,14 @@ class OnPolicyBuffer():
         # lstm observations (only observations which are input to the lstm, such as log returns and vix)
         self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
         # hidden states / lstm states to be saved
-        self.lstm_state_actor = np.zeros((self.buffer_size,), dtype=np.float32)
-        self.lstm_state_critic = np.zeros((self.buffer_size,), dtype=np.float32)
+        # about the shapes: the array needs to be of length buffer_size, then it needs to be able to store
+        # arrays of shape (2,1,64) = 2 arrays of shape 1*64
+        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
         # actions come in as tensor (estimation of actor) per step
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
@@ -74,8 +82,12 @@ class OnPolicyBuffer():
                                      "advantage_estimates": self.advantage_estimates,
                                      "returns": self.returns,
                                      "lstm_obs": self.lstm_obs,
-                                     "lstm_state_actor": self.lstm_state_actor,
-                                     "lstm_state_critic": self.lstm_state_critic})
+                                     "lstm_state_h": self.lstm_state_h,
+                                     "lstm_state_c": self.lstm_state_c,
+                                     "lstm_state_actor_h": self.lstm_state_actor_h,
+                                     "lstm_state_actor_c": self.lstm_state_actor_c,
+                                     "lstm_state_critic_h": self.lstm_state_critic_h,
+                                     "lstm_state_critic_c": self.lstm_state_critic_c})
 
     def add(self, object_to_add, key_name, position=0):
         """
@@ -91,8 +103,9 @@ class OnPolicyBuffer():
             # note: tf.identity() creates a copy of the tensor, it is the tf equivalent of e.g. np.copy() or pd.copy()
             if key_name == "value_estimates":
                 self.trajectory_dict[key_name][position] = object_to_add.clone().numpy().flatten()  # flatten should only be applied to values, ont to log_prob
-            elif key_name in ["lstm_state_actor", "lstm_state_critic"]:
-                self.self.trajectory_dict[key_name][position] = object_to_add
+            elif key_name in ["lstm_state_h", "lstm_state_c", "lstm_state_actor_h", "lstm_state_actor_c",
+                              "lstm_state_critic_h", "lstm_state_critic_c"]:
+                self.trajectory_dict[key_name][position] = object_to_add
             else:
                 self.trajectory_dict[key_name][position] = object_to_add.clone().numpy()
         else:
@@ -189,8 +202,12 @@ class OnPolicyBuffer():
         # lstm observations (only observations which are input to the lstm, such as log returns and vix)
         self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
         # hidden states / lstm states to be saved
-        self.lstm_state_actor = np.zeros((self.buffer_size,), dtype=np.float32)
-        self.lstm_state_critic = np.zeros((self.buffer_size,), dtype=np.float32)
+        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
         # actions
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
@@ -219,7 +236,12 @@ class OnPolicyBuffer():
                                      "advantage_estimates": self.advantage_estimates,
                                      "returns": self.returns,
                                      "lstm_obs": self.lstm_obs,
-                                     "lstm_state_actor": self.lstm_state_actor,
-                                     "lstm_state_critic": self.lstm_state_critic})
+                                     "lstm_state_h": self.lstm_state_h,
+                                     "lstm_state_c": self.lstm_state_c,
+                                     "lstm_state_actor_h": self.lstm_state_actor_h,
+                                     "lstm_state_actor_c": self.lstm_state_actor_c,
+                                     "lstm_state_critic_h": self.lstm_state_critic_h,
+                                     "lstm_state_critic_c": self.lstm_state_critic_c
+                                     })
 
 
