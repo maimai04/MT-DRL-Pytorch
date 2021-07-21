@@ -65,15 +65,6 @@ def calculate_price_volume_WhartonData(df,
     data = data.sort_values(['tic', 'datadate'], ignore_index=True)
     return data
 
-
-def calculate_price_volume_OtherData() -> pd.DataFrame:
-    """
-    ## todo: define function to calculate price and trading volume for a
-    @return:
-    """
-    pass
-
-
 def add_technical_indicator_with_StockStats(df,
                                             technical_indicators_list=["macd", "rsi_30", "cci_30", "dx_30"]):
     # todo: was add_technical_indicator (specified as to "with stockstats", because not self-evident and matters for choice)

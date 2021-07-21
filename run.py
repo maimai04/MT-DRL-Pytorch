@@ -77,7 +77,7 @@ if __name__ == "__main__":
     entropy_loss_coef_hpt = hptuning_config.ENTROPY_LOSS_COEF_LIST
 
     # AGENT PARAMS & HYPERPARAMETER
-    net_version = agent_params.ppoCustomBase.NET_VERSION
+    net_arch = agent_params.ppoCustomBase.NET_ARCH
     batch_size = agent_params.ppoCustomBase.BATCH_SIZE
     num_epochs = agent_params.ppoCustomBase.NUM_EPOCHS
     optimizer = agent_params.ppoCustomBase.OPTIMIZER
@@ -89,6 +89,7 @@ if __name__ == "__main__":
     critic_loss_coef = agent_params.ppoCustomBase.CRITIC_LOSS_COEF
     entropy_loss_coef = agent_params.ppoCustomBase.ENTROPY_LOSS_COEF
     max_gradient_norm = agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION
+    predict_deterministic = agent_params.ppoCustomBase.PREDICT_DETERMINISTIC
 
     # LEARNING PARAMS
     total_timesteps_to_collect = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT
@@ -107,8 +108,9 @@ if __name__ == "__main__":
                                            features_mode=features_mode,
                                            run_mode=run_mode,
                                            reward_measure=reward_measure,
-                                           net_version=net_version,
+                                           net_arch=net_arch,
                                            env_step_version=env_step_version,
+                                           predict_deterministic=predict_deterministic
                                            )
 
     # create saving path and directory for loggings
@@ -158,7 +160,7 @@ if __name__ == "__main__":
                           clip_list = clip_list,
                           critic_loss_coef_hpt = critic_loss_coef_hpt,
                           entropy_loss_coef_hpt = entropy_loss_coef_hpt,
-                          net_version = net_version,
+                          net_arch = net_arch,
                           batch_size = batch_size,
                           num_epochs = num_epochs,
                           optimizer = optimizer,
@@ -170,7 +172,8 @@ if __name__ == "__main__":
                           entropy_loss_coef = entropy_loss_coef,
                           max_gradient_norm = max_gradient_norm,
                           total_episodes_to_train_base = total_episodes_to_train_base,
-                          total_episodes_to_train_cont = total_episodes_to_train_cont
+                          total_episodes_to_train_cont = total_episodes_to_train_cont,
+                          predict_deterministic=predict_deterministic
                         )
 
 
@@ -293,7 +296,7 @@ if __name__ == "__main__":
                                    total_episodes_to_train_base=total_episodes_to_train_base,
                                    total_episodes_to_train_cont=total_episodes_to_train_cont,
 
-                                   net_version=net_version,
+                                   net_arch=net_arch,
                                    optimizer=optimizer,
                                    optimizer_learning_rate=optimizer_learning_rate,
                                    max_gradient_norm=max_gradient_norm,
@@ -311,6 +314,8 @@ if __name__ == "__main__":
                                    features_list=features_list,
                                    single_features_list=single_features_list,
                                    lstm_features_list=lstm_features_list,
+
+                                 predict_deterministic=predict_deterministic,
         )
 
 

@@ -148,13 +148,14 @@ def get_model(train_environment,
               clip_epsilon=None,
               critic_loss_coef=None,
               entropy_loss_coef=None,
-              net_version=None,
+              net_arch=None,
               optimizer=None,
               optimizer_learning_rate=None,
               max_gradient_norm=None,
               total_timesteps_to_collect=None,
               num_epochs=None,
               batch_size=None,
+              predict_deterministic=False,
               ):
 
     if strategy_mode == "ppoCustomBase":
@@ -166,12 +167,12 @@ def get_model(train_environment,
                                  observations_size=shape_observation_space,
                                  # size of observations AFTER going through the env; the env also adds positions for n. asset holdings
                                  actions_num=assets_dim,
-                                 version=net_version,
+                                 net_arch=net_arch,
                                  env_step_version=env_step_version,
                                  optimizer=optimizer,
                                  learning_rate=optimizer_learning_rate,
                                  lstm_observations_size=shape_lstm_observation_space,
-                                 lstm_hidden_size_feature_extractor= 64,
+                                 lstm_hidden_size_feature_extractor=64,
                                  lstm_num_layers=2,
                                  feature_extractor_class=FeatureExtractorNet,
                                  actor_class=ActorNet,
@@ -205,7 +206,7 @@ def get_model(train_environment,
                                 actions_number=assets_dim,
                                 )
         if now_hptuning or use_tuned_params:
-            if now_hptuning:
+            if now_hptuning: # todo: rm
                 logger.info("taking hyperparameters for tuning to model.")
             if use_tuned_params:
                 logger.info("using tuned hyperparameters to train the model.")
@@ -246,7 +247,8 @@ def get_model(train_environment,
                               val_env_firstday=val_env_firstday,
                               logger=logger,
                               env_step_version=env_step_version,
-                              assets_dim=assets_dim
+                              assets_dim=assets_dim,
+                              predict_deterministic=predict_deterministic,
                               )
 
     elif strategy_mode == "ppo": # todo: rm

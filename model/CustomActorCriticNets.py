@@ -1,6 +1,8 @@
+from typing import Tuple
+
 import torch
 from torch import nn
-from torch.distributions import Normal
+from torch.distributions import Normal, Dirichlet
 import numpy as np
 
 
@@ -27,7 +29,7 @@ class FeatureExtractorNet(nn.Module):
                  observations_size: int = None, # usually n_assets * n_asset_features + 1 (cash) + 1 (vix)
                  mid_features_size: int = 64, # number of neurons in the mlp layer
                  hidden_size: int = 64,
-                 version: str = "mlp_separate",
+                 net_arch: str = "mlp_separate",
                  lstm_observations_size: int = None,  # usually n_assets (returns) + 1 (vix)
                  lstm_hidden_size: int = 64, # number of neurons in the lstm layer
                  lstm_num_layers: int = 2, # how many lstm layers; is a parameter one can directly pass to the nn.LSTM
@@ -41,17 +43,17 @@ class FeatureExtractorNet(nn.Module):
         self.observations_size = observations_size
         self.mid_features_size = mid_features_size
         self.hidden_size = hidden_size
-        self.version = version
+        self.net_arch = net_arch
         self.lstm_observations_size = lstm_observations_size
         self.lstm_hidden_size = lstm_hidden_size
         self.lstm_num_layers = lstm_num_layers
 
         # define the network which outputs the action_mean
-        if version == "mlp_separate" or version == "mlp_shared":
-            print("(FE) version = only mlp (shared or separate)")
-            # mlp_separate: base version according to paper implementation, NO shared layers between actor and critic
-            # mlp_shared: base version but with shared layers
-                # vanilla version with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
+        if net_arch == "mlp_separate" or net_arch == "mlp_shared":
+            print("(FE) net_arch = only mlp (shared or separate)")
+            # mlp_separate: base net_arch according to paper implementation, NO shared layers between actor and critic
+            # mlp_shared: base net_arch but with shared layers
+                # vanilla net_arch with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
                 # and both layers shared between actor and critic. Actor and critic then only
                 # have one separate layer each, that is, for the output (actions for actor, value for critic)
                 # this is the base case net architecture because it is the same as used in stable baselines
@@ -68,8 +70,8 @@ class FeatureExtractorNet(nn.Module):
                 nn.Tanh(),
             )
 
-        elif version == "mlplstm_separate" or version == "mlplstm_shared": # using mlp as before and adding an lstm for additional lags extraction.
-            print("(FE) version = mlp + lstm")
+        elif net_arch == "mlplstm_separate" or net_arch == "mlplstm_shared": # using mlp as before and adding an lstm for additional lags extraction.
+            print("(FE) net_arch = mlp + lstm")
             # again, no shared layers between actor and critic
             self.feature_extractor_mlp = nn.Sequential(
                 nn.Linear(in_features=observations_size, out_features=hidden_size, bias=True),
@@ -94,7 +96,7 @@ class FeatureExtractorNet(nn.Module):
                 nn.Tanh()
             )
         else:
-            print("(FE) Error, no valid version specified.")
+            print("(FE) Error, no valid net_arch specified.")
 
     def create_initial_lstm_state(self, sequence_length=1):
         # initialize zero hidden states i the beginning
@@ -115,7 +117,7 @@ class FeatureExtractorNet(nn.Module):
         # if length of shape vector is 1 (e.g. shape = 2), then we have a tensor like this: [features],
         # => batch of 1
         # and we want to make it compatible with concatenation later with the lstm output, so we reshape it to [[features]] (shape = batch_size, n_features)
-        if len(observations.shape) == 1 and self.version in ["mlplstm_separate", "mlplstm_shared"]:
+        if len(observations.shape) == 1 and self.net_arch in ["mlplstm_separate", "mlplstm_shared"]:
             #print("observations in (FE): ")
             #print(observations.shape)
             observations = observations.reshape(1, self.observations_size)
@@ -129,7 +131,7 @@ class FeatureExtractorNet(nn.Module):
             #print("lstm_observations out (FE):")
             #print(lstm_observations.shape)
 
-        elif len(observations.shape) > 1 and self.version in ["mlplstm_separate", "mlplstm_shared"]:
+        elif len(observations.shape) > 1 and self.net_arch in ["mlplstm_separate", "mlplstm_shared"]:
             #print("lstm_observations in (FE):")
             #print(lstm_observations.shape)
             # reshape the lstm input dimension_ must be 3D (batch_number=1, time steps per batch, features_number)
@@ -138,10 +140,10 @@ class FeatureExtractorNet(nn.Module):
             #print(lstm_observations.shape)
 
         # if we have only mlp, we use simply the mlp feature extractor (actually same as feature_extractor_mlp)
-        if self.version == "mlp_separate" or self.version == "mlp_shared":
+        if self.net_arch == "mlp_separate" or self.net_arch == "mlp_shared":
             mid_features = self.feature_extractor(observations)
         # if we have an lstm additionally:
-        elif self.version == "mlplstm_separate" or self.version == "mlplstm_shared":
+        elif self.net_arch == "mlplstm_separate" or self.net_arch == "mlplstm_shared":
             mid_features_mlp = self.feature_extractor_mlp(input=observations)
             # observations for the lstm layer need to be of dim 3, even if it is just one observation for one forward pass
             # it must be (batchsize, timesteps, features). If we pass only ONE TIME STEP, shape must be: torch.Size([1, 1, lstm_observations_shape])
@@ -177,7 +179,7 @@ class FeatureExtractorNet(nn.Module):
             mid_features = self.summary_layer(mid_features)
 
         else:
-            print("(FE) Error, no valid version specified.")
+            print("(FE) Error, no valid net_arch specified.")
         return mid_features, lstm_states
 
 
@@ -195,7 +197,7 @@ class ActorNet(nn.Module):
                mid_features_size: int = 64,
                # hidden size in hidden layer, if there is any
                hidden_size: int = 64,
-               version: str = "mlp_separate",
+               net_arch: str = "mlp_separate",
                env_step_version: str = "paper",
                ):
     """
@@ -205,30 +207,26 @@ class ActorNet(nn.Module):
     """
     super(ActorNet, self).__init__()
     # define the network which outputs the action_mean
-    #if version == "mlp_separate" or version == "mlp_shared": # todo: rm, independent of net version
-      # in the base version, as already discussed in the Feature extractor class,
-      # the feature extraction is fully shared between actor and critic.
-      # actor hence only consists of one additional layer for the actions
-      # we want to get actions = how many stocks to buy (:100)
-    self.action_mean_net = nn.Sequential(
-        nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
-        #nn.Tanh(), # I first used the squashing function but git better results without it, for some reason
-        )
+    if env_step_version == "paper":
+        self.action_mean_net = nn.Sequential(
+            nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
+            #nn.Tanh(), # I first used the squashing function but git better results without it, for some reason
+            )
+        # add log stdev as a parameter, initializes as 0 by default
+        # Note: this is because log(std) = 0 means that std = 1, since log(1)=0
+        # note: sometimes problems that stdev EXPLODES; based on a reddit post (https://www.reddit.com/r/reinforcementlearning/comments/fdzbs9/ppo_entropy_and_gaussian_standard_deviation/)
+        # i found a workaround in the openai spinning up implementation: https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/core.py#L84
+        log_stdev = -0.5 * np.ones(actions_num, dtype=np.float32)
+        self.log_stdev = torch.nn.Parameter(data=torch.as_tensor(log_stdev), requires_grad=True)
     # in case we are using the "newNoShort" version of the step_version (see documentation),
     # we have to add a softmax layer at the end (because we want to get actions = target portfolio weights)
-    if env_step_version == "newNoShort":
+    if env_step_version == "newNoShort" or self.step_version == "newNoShort2":
         self.action_mean_net = nn.Sequential(
           nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
-          nn.Softmax(),
+          #nn.Softmax(),
       )
-    # add log stdev as a parameter, initializes as 0 by default
-    # Note: this is because log(std) = 0 means that std = 1, since log(1)=0
-
-    # note: sometimes problems that stdev EXPLODES; based on a reddit post (https://www.reddit.com/r/reinforcementlearning/comments/fdzbs9/ppo_entropy_and_gaussian_standard_deviation/)
-    # i found a workaround in the openai spinning up implementation: https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/core.py#L84
-    log_stdev = -0.5 * np.ones(actions_num, dtype=np.float32)
-    self.log_stdev = torch.nn.Parameter(data=torch.as_tensor(log_stdev), requires_grad=True)
-    #self.log_stdev = nn.Parameter(torch.ones(actions_num)*0)
+    #Note: the output in this case is interpreted as vector of dirichlet alphas (one entry for each asset)
+      # we will later take the log of them so they are non-negative and then use them in the Dirichlet dirtribution
 
   def forward(self, mid_features):
     """
@@ -249,7 +247,7 @@ class CriticNet(nn.Module):
   def __init__(self,
                mid_features_size: int=64,
                hidden_size: int=64,
-               version: str="mlp_separate"):
+               net_arch: str="mlp_separate"):
     """
     mid_features_size  : size of the observation space, input dimension
     hidden_size        : number of neurons
@@ -338,8 +336,9 @@ class BrainActorCritic(nn.Module):
                  # optimizer
                  optimizer: torch.optim = torch.optim.Adam,
                  learning_rate: float = 0.00025,
-                 # versions
-                 version: str = "mlp_separate",
+                 # net_archs
+                 net_arch: str = "mlp_separate",
+                 # step version in env
                  env_step_version: str = "paper",
                  ):
         """
@@ -361,32 +360,35 @@ class BrainActorCritic(nn.Module):
         @param lstm_num_layers:
         @param optimizer:
         @param learning_rate:
-        @param version:
+        @param net_arch:
         @param env_step_version:
         """
         super(BrainActorCritic, self).__init__()
         # initialize class variables (only those needed in other functions)
-        self.version = version
+        self.net_arch = net_arch
+        self.env_step_version = env_step_version
+        if self.env_step_version == "newNoShort2":
+            actions_num = actions_num + 1 # one for cash
 
-        if version == "mlp_shared" or version == "mlplstm_shared":
+        if net_arch == "mlp_shared" or net_arch == "mlplstm_shared":
             # only one feature extractor for both actor and critic (shared)
             self.feature_extractor = feature_extractor_class(observations_size=observations_size,#FeatureExtractorNet
                                                          mid_features_size=mid_features_size,
                                                          hidden_size=hidden_size_features_extractor,
-                                                         version=version,
-                                                         # if we have version == mlplstm, else these will be ignored
+                                                         net_arch=net_arch,
+                                                         # if we have net_arch == mlplstm, else these will be ignored
                                                          lstm_hidden_size=lstm_hidden_size_feature_extractor,
                                                          lstm_observations_size=lstm_observations_size,
                                                          lstm_num_layers=lstm_num_layers)
             # initialize weights for feature extractor
             self.init_weights_feature_extractor_net = init_weights_feature_extractor_net
             self.feature_extractor.apply(self.init_weights_feature_extractor_net)
-        elif version == "mlp_separate" or version == "mlplstm_separate":
+        elif net_arch == "mlp_separate" or net_arch == "mlplstm_separate":
             # separate feature extraction layers between actor and critic
             self.feature_extractor_actor = FeatureExtractorNet(observations_size=observations_size,
                                                                mid_features_size=mid_features_size,
                                                                hidden_size=hidden_size_features_extractor,
-                                                               version=version,
+                                                               net_arch=net_arch,
                                                                # if we have verison == mlplstm, else these will be ignored
                                                                lstm_hidden_size=lstm_hidden_size_feature_extractor,
                                                                lstm_observations_size=lstm_observations_size,
@@ -395,7 +397,7 @@ class BrainActorCritic(nn.Module):
             self.feature_extractor_critic = FeatureExtractorNet(observations_size=observations_size,
                                                                mid_features_size=mid_features_size,
                                                                hidden_size=hidden_size_features_extractor,
-                                                               version=version,
+                                                               net_arch=net_arch,
                                                                # if we have verison == mlplstm, else these willmbe ignored
                                                                lstm_hidden_size=lstm_hidden_size_feature_extractor,
                                                                lstm_observations_size=lstm_observations_size,
@@ -406,19 +408,19 @@ class BrainActorCritic(nn.Module):
             self.feature_extractor_actor.apply(self.init_weights_feature_extractor_net)
             self.feature_extractor_critic.apply(self.init_weights_feature_extractor_net)
         else:
-            print("(BRAIN) Error, no valid version specified.")
+            print("(BRAIN) Error, no valid net_arch specified.")
 
         # initialize actor net
         self.actor = actor_class(actions_num=actions_num,
                               mid_features_size=mid_features_size,
                               hidden_size=hidden_size_actor,
-                              version=version,
+                              net_arch=net_arch,
                               env_step_version=env_step_version)
 
         # initialize acritic net
         self.critic = critic_class(mid_features_size=mid_features_size,
                                 hidden_size=hidden_size_critic,
-                                version=version)
+                                net_arch=net_arch)
 
         #initialize weights for actor and critic
         self.init_weights_actor_net = init_weights_actor_net
@@ -430,7 +432,7 @@ class BrainActorCritic(nn.Module):
         self.learning_rate = learning_rate
         self.optimizer = optimizer
 
-        if version == "mlp_shared" or version == "mlplstm_shared":
+        if net_arch == "mlp_shared" or net_arch == "mlplstm_shared":
             # for Adam, apply optimizer to all the parameters in all the three networks
             self.optimizer = self.optimizer(list(self.feature_extractor.parameters()) +
                                             list(self.actor.parameters()) +
@@ -440,7 +442,7 @@ class BrainActorCritic(nn.Module):
                                             betas=(0.9, 0.999), # by default
                                             weight_decay=0 # L2 penalty, float, 0 by default
                                             )
-        elif version == "mlp_separate" or version == "mlplstm_separate": # separate layers between actor and critic
+        elif net_arch == "mlp_separate" or net_arch == "mlplstm_separate": # separate layers between actor and critic
             self.optimizer = self.optimizer(list(self.feature_extractor_actor.parameters()) +
                                             list(self.feature_extractor_critic.parameters()) +
                                             list(self.actor.parameters()) +
@@ -451,69 +453,31 @@ class BrainActorCritic(nn.Module):
                                             weight_decay=0 # L2 penalty, float, 0 by default
                                             )
         else:
-            print("(BRAIN) Error, no valid version specified.")
+            print("(BRAIN) Error, no valid net_arch specified.")
 
-    def forward(self, observations, lstm_observations=None, lstm_states=None, lstm_states_actor=None, lstm_states_critic=None):
-        """
-        Note: this function must be implemented when subclassing nn.Module, however it is not actually called during my training,
-        because I use a custom forward method: forward_call (see next function).
-        @param observations: Input observations one state or batch of states, coming from the environment, should be torch.Tensor
-        @param lstm_observations: Input observations only for the lstm. Only applicable if lstm_shared or lstm_separate net version specified. By default None.
-        @param lstm_states: hidden and cell state tuple from forward pass from the previous state. encodes previous part of time series
-                            only applicable if lstm net version SHARED chosen (so same lstm state for actor and critic, since shared feature extractor)
-        @param lstm_states_actor: hidden and cell state tuple from forward pass from the previous state for the ACTOR. encodes previous part of time series
-                            only applicable if lstm net version SEPARATE chosen
-        @param lstm_states_critic: hidden and cell state tuple from forward pass from the previous state for the CRITIC. encodes previous part of time series
-                            only applicable if lstm net version SEPARATE chosen
-        @return:
-        """
-        if self.version == "mlp_shared" or self.version == "mlplstm_shared": # shared feature extactor between actor and critic
-            mid_features, lstm_state = self.feature_extractor(observations=observations,
-                                                              lstm_observations=lstm_observations,
-                                                              lstm_states=lstm_states)
-            actions = self.actor(mid_features)
-            value = self.critic(mid_features)
-
-            # set variables not needed
-            lstm_states_actor = None
-            lstm_states_critic = None
-            if self.version == "mlp_shared":
-                lstm_states=None
-
-        elif self.version == "mlp_separate" or self.version == "mlplstm_separate": # separate layers between actor and critic
-            mid_features_actor, lstm_states_actor = self.feature_extractor_actor(observations=observations,
-                                                              lstm_observations=lstm_observations,
-                                                              lstm_states=lstm_states_actor)
-            mid_features_critic, lstm_states_critic = self.feature_extractor_critic(observations=observations,
-                                                              lstm_observations=lstm_observations,
-                                                              lstm_states=lstm_states_critic)
-            actions = self.actor(mid_features_actor)
-            value = self.critic(mid_features_critic)
-
-            # set variables not needed
-            lstm_states = None
-            if self.version == "mlp_separate":
-                lstm_states_actor=None
-                lstm_states_critic=None
-        else:
-            print("(BRAIN) Error, no valid version specified.")
-
-        return actions, value, lstm_states, lstm_states_actor, lstm_states_critic
-
-    def forward_pass(self, observations: torch.Tensor, lstm_observations: torch.Tensor = None,
-                     actions=None, lstm_states=None, lstm_states_actor=None, lstm_states_critic=None, evaluation_mode=False):
+    def forward(self,
+                observations: torch.Tensor,
+                evaluation_mode: bool=False,
+                actions: torch.Tensor=None,
+                actions_deterministic: bool=False,
+                lstm_observations: torch.Tensor=None,
+                lstm_states: Tuple=None,
+                lstm_states_actor: Tuple=None,
+                lstm_states_critic: Tuple=None,
+                ):
         """
 
         @param observations:
-        @param lstm_observations:
+        @param evaluation_mode:
         @param actions:
+        @param actions_deterministic:
+        @param lstm_observations:
         @param lstm_states:
         @param lstm_states_actor:
         @param lstm_states_critic:
-        @param evaluation_mode:
         @return:
         """
-        if self.version == "mlp_shared" or self.version == "mlplstm_shared": # shared feature extactor between actor and critic
+        if self.net_arch == "mlp_shared" or self.net_arch == "mlplstm_shared": # shared feature extactor between actor and critic
             ### FEATURES EXTRACTION
             mid_features, lstm_states = self.feature_extractor(observations=observations,
                                                               lstm_observations=lstm_observations,
@@ -528,10 +492,10 @@ class BrainActorCritic(nn.Module):
             # set variables not needed
             lstm_states_actor = None
             lstm_states_critic = None
-            if self.version == "mlp_shared":
+            if self.net_arch == "mlp_shared":
                 lstm_states=None
 
-        elif self.version == "mlp_separate" or self.version == "mlplstm_separate": # separate layers between actor and critic
+        elif self.net_arch == "mlp_separate" or self.net_arch == "mlplstm_separate": # separate layers between actor and critic
             ### FEATURES EXTRACTION
             mid_features_actor, lstm_states_actor = self.feature_extractor_actor(observations=observations,
                                                                                 lstm_observations=lstm_observations,
@@ -548,38 +512,92 @@ class BrainActorCritic(nn.Module):
 
             # set variables not needed
             lstm_states = None
-            if self.version == "mlp_separate":
+            if self.net_arch == "mlp_separate":
                 lstm_states_actor=None
                 lstm_states_critic=None
         else:
-            print("(BRAIN) Error, no valid version specified.")
-        #print("agent: action means")
-        #print(action_means)
-        # get estimated log stdev parameter (like a bias term of the last layer) appended to the actor network
-        # Note: it is a nn.Parameter, which is like a tensor added to the module of Pytorch and it is a bit badly
-        # documented but apparently this is like a bias term that gets changed as well when the network trains.
-        log_stdev = self.actor.log_stdev
-        # convert log standard deviation to stdev
-        stdev = log_stdev.exp()
+            print("(BRAIN) Error, no valid net_arch specified.")
 
-        # Note: this is one value. But we need to get a vector of this same value (one for each action)
-        # so we can then use it to create a distribution around each action mean
-        stdev_vector = torch.ones_like(action_means) * stdev
-        # now that we have the means for each action and the standard deviation (one estimate only, same for all actions),
-        # we can create a distribution around each action mean; we define a normal distribution for our continuous actions,
-        # but we could also use something else
-        actions_distribution = Normal(action_means, stdev_vector)
-        # see also: https://pytorch.org/docs/stable/distributions.html
+        if self.env_step_version == "paper":
+            # get estimated log stdev parameter (like a bias term of the last layer) appended to the actor network
+            # Note: it is a nn.Parameter, which is like a tensor added to the module of Pytorch and it is a bit badly
+            # documented but apparently this is like a bias term that gets changed as well when the network trains.
+            log_stdev = self.actor.log_stdev
+            # convert log standard deviation to stdev
+            stdev = log_stdev.exp()
+            # Note: this is one value. But we need to get a vector of this same value (one for each action)
+            # so we can then use it to create a distribution around each action mean
+            stdev_vector = torch.ones_like(action_means) * stdev
+            # now that we have the means for each action and the standard deviation (one estimate only, same for all actions),
+            # we can create a distribution around each action mean; we define a normal distribution for our continuous actions,
+            # but we could also use something else
+            actions_distribution = Normal(action_means, stdev_vector)
+            # see also: https://pytorch.org/docs/stable/distributions.html
+        elif self.env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+            concentrations = action_means.exp() # we interpret the output of the actor (named action means)
+                                                # as log alpha vector (=Dirichlet concentrations), and we transform from [-inf, inf] interval
+                                                # to a [0, inf] interval
+            #print("log alphas: ")
+            #print(action_means)
+            #print("conc:")
+            #print(concentrations)
+            actions_distribution = Dirichlet(concentration=concentrations)
+            # now the action means are the mean of the dirichlet distribution
+            action_means = actions_distribution.mean
+            # there is no stdev, so we set it to None
+            stdev = None
+        else:
+            print("(BRAIN) Error, no valid env_step_version specified.")
 
+        #### EVALUATE
         if evaluation_mode:
-            # If we are in "evaluation mode", we don't sample a new action but instead
-            # use the old action as input to the current distribution.
-            # We want to find out: how likely are the actions we have taken during the trajectories sampling
-            # (into the Buffer) now, after we have updated our policy with a backward pass?
-            # Note: in the first round, we have not yet updated our policy, hence the probabilities we will get will be the same
-            # get new action log probabilities for the old actions using peviously defined Normal distribution (actions_distribution)
-            actions_log_probs = actions_distribution.log_prob(actions)
+            # in evaluation mode, we want to get the new log probabilities and new actions distribution based
+            # on the actions we feed the agent. Before the first backward pass, the actions distribution and probability are still the same.
+            # after the first backward pass, they change.
+            actions_joint_log_proba, actions_distr_entropy = self.evaluate_actions(actions, actions_distribution)
+            #print("actions_joint_log_proba")
+            #print(actions_joint_log_proba)
+            return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
 
+        #### FORWARD PASS / PREDICT
+        else: # by default, forward pass
+            if actions_deterministic == True: # only used sometimes for prediction, never in a normal forward pass
+                # if we sample deterministically, our actions are the action means
+                action_samples = action_means
+
+            elif actions_deterministic == False:
+                # if we sample non-deterministically, our actions are sampled from a distribution, which
+                # gives it some randomness within a seed and gives it some exploration
+                action_samples = actions_distribution.rsample()
+                # Note: rsample() supports gradient calculation through the sampler, in contrast to sample()
+                # https://forum.pyro.ai/t/sample-vs-rsample/2344
+
+            # get action log probabilities with current action samples.
+            # This part of the function is used when we forward pass during trajectories collection into the buffer
+            actions_log_probs = actions_distribution.log_prob(action_samples)
+            # now we want to calculate the joint distribution of all action mean distributions over all stocks
+            # we make the assumption that the actions are independent from each other (could be violated)
+            # and we have log probas, hence we can sum the log probabilities up
+            if len(actions_log_probs.shape) > 1:
+                actions_joint_log_proba = actions_log_probs.sum(dim=1)
+            else:
+                actions_joint_log_proba = actions_log_probs.sum()
+
+            return value_estimate, action_samples, \
+                   actions_joint_log_proba, action_means, actions_distribution, stdev, \
+                   lstm_states, lstm_states_actor, lstm_states_critic
+
+    def evaluate_actions(self, actions, actions_distribution):
+        # If we are in "evaluation mode", we don't sample a new action but instead
+        # use the old action as input to the current distribution.
+        # We want to find out: how likely are the actions we have taken during the trajectories sampling
+        # (into the Buffer) now, after we have updated our policy with a backward pass?
+        # Note: in the first round, we have not yet updated our policy, hence the probabilities we will get will be the same
+        # get new action log probabilities for the old actions using peviously defined Normal distribution (actions_distribution)
+        actions_log_probs = actions_distribution.log_prob(actions)
+        actions_distr_entropy = actions_distribution.entropy()
+
+        if self.env_step_version == "paper":
             # now we want to calculate the joint distribution of all action mean distributions over all stocks
             # we make the assumption that the actions are independent from each other (could be violated)
             # and we have log probas, hence we can sum the log probabilities up
@@ -592,127 +610,23 @@ class BrainActorCritic(nn.Module):
                 actions_joint_log_proba = actions_log_probs.sum(dim=1)
             else:
                 actions_joint_log_proba = actions_log_probs.sum()
-
             # calculate joint entropy the same way:
-            actions_distr_entropy = actions_distribution.entropy()
             if len(actions_distr_entropy.shape) > 1:
                 actions_distr_entropy = actions_distr_entropy.sum(dim=1)
             else:
                 actions_distr_entropy = actions_distr_entropy.sum()
-            # Note: our log_stdev is initialized as a vector of zeroes.
-            # but if we take the exp(0), it returns a vector of ones (the standard deviations).
-            # entropy of a Normal distribution with std 1 =~1.4189
-            # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived/1804829
-            # so this will be the first entropy value we will get before any backpropagation
-            # (this is good to know for debugging / to check if code works properly)
-            return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
-
-        else: # by default, forward pass
-            # here we sample actions from the distribution => non-deterministic, in order to add some exploration
-            action_samples = actions_distribution.rsample()
-            # Note: rsample() supports gradient calculation through the sampler, in contrast to sample()
-            # https://forum.pyro.ai/t/sample-vs-rsample/2344
-
-            # get action log probabilities with current action samples.
-            # This part of the function is used when we forward pass during trajectories collection into the buffer
-            actions_log_probs = actions_distribution.log_prob(action_samples)
-            # now we want to calculate the joint distribution of all action mean distributions over all stocks
-            # we make the assumption that the actions are independent from each other (could be violated)
-            # and we have log probas, hence we can sum the log probabilities up
-            if len(actions_log_probs.shape) > 1:
-                actions_joint_log_proba = actions_log_probs.sum(dim=1)
-            else:
-                actions_joint_log_proba = actions_log_probs.sum()
-            return value_estimate, action_samples, actions_joint_log_proba, action_means, actions_distribution, stdev, \
-                   lstm_states, lstm_states_actor, lstm_states_critic
-
-    def predict(self, new_obs, new_lstm_obs=None, deterministic=False, lstm_states=None, lstm_states_actor=None, lstm_states_critic=None):
-        """
-
-        @param new_obs: New observation coming from environment used for predictions
-        @param new_lstm_obs: New observation coming from environment but only for lstm
-        @param deterministic: True by default. If True, will sample action from distribution defined by parameters estimated from the policy.
-                              If False, will pick mean action.
-        @param lstm_states: hidden and cell state tuple from forward pass from the previous state. encodes previous part of time series
-                            only applicable if lstm net version SHARED chosen (so same lstm state for actor and critic, since shared feature extractor)
-        @param lstm_states_actor: hidden and cell state tuple from forward pass from the previous state for the ACTOR. encodes previous part of time series
-                            only applicable if lstm net version SEPARATE chosen
-        @param lstm_states_critic: hidden and cell state tuple from forward pass from the previous state for the CRITIC. encodes previous part of time series
-                            only applicable if lstm net version SEPARATE chosen
-        @return:
-        """
-        # deterministic / non-deterministic:
-        # https://datascience.stackexchange.com/questions/56308/why-do-trained-rl-agents-still-display-stochastic-exploratory-behavior-on-test
-        # note: it somehow yields better result in testing when sampling (non-deterministic) actions than when I use the mean directly
-        # this is probably because the probability distribution is part of the agent model and therefore model-leaning
-        # predictions should be sampled
-
-        # change new observation to torch tensor, if it is not already a torch tensor
-       # if isinstance(new_obs, torch.Tensor):
-        #    pass
-        #else:
-        #    new_obs = torch.as_tensor(new_obs, dtype=torch.float)
-        # change new lstm observation to torch tensor of shape 3D, if it is not already a torch tensor
-        #if isinstance(new_lstm_obs, torch.Tensor):
-        #    if new_lstm_obs.dim() != 3: # we will only p
-        #        new_lstm_obs.reshape((1, 1, 3)) # reshape to 3D, with (batch number,
-        #else:
-        #    new_obs = torch.as_tensor(new_obs, dtype=torch.float)
-
-        ### FEATURES EXTRACTION
-        # get intermediate features from features extractor
-        if self.version == "mlp_shared" or self.version == "mlplstm_shared":  # shared feature extactor between actor and critic
-            mid_features, lstm_states = self.feature_extractor(observations=new_obs,
-                                                               lstm_observations=new_lstm_obs,
-                                                               lstm_states=lstm_states)
-            ### CRITIC
-            # get value estimate from critic (value network) using these mid_features
-            value_estimate = self.critic(mid_features)
-            ### ACTOR
-            # get estimated action means from actor (policy network) using these mid features
-            action_means = self.actor(mid_features)
-
-            #set variables not needed
-            lstm_states_actor = None
-            lstm_states_critic = None
-            if self.version == "mlp_shared":
-                lstm_states=None
-
-        elif self.version == "mlp_separate" or self.version == "mlplstm_separate":  # separate layers between actor and critic
-            mid_features_actor, lstm_states_actor = self.feature_extractor_actor(observations=new_obs,
-                                                                                lstm_observations=new_lstm_obs,
-                                                                                lstm_states=lstm_states_actor)
-            mid_features_critic, lstm_states_critic = self.feature_extractor_critic(observations=new_obs,
-                                                                                lstm_observations=new_lstm_obs,
-                                                                                lstm_states=lstm_states_critic)
-            ### CRITIC
-            # get value estimate from critic (value network) using these mid_features
-            value_estimate = self.critic(mid_features_critic)
-            ### ACTOR
-            # get estimated action means from actor (policy network) using these mid features
-            action_means = self.actor(mid_features_actor)
-            #set variables not needed
-            lstm_states=None
-            if self.version == "mlp_separate":
-                lstm_states_actor=None
-                lstm_states_critic=None
+        # here we use Dirichlet distribution, which already gives a joint log prob and entropy
+        elif self.env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+            actions_joint_log_proba = actions_log_probs
+            actions_distr_entropy = actions_distr_entropy
         else:
-            print("(BRAIN) Error, no valid version specified.")
+            print("(BRAIN) Error, no valid env_step_version specified.")
+        # Note: our log_stdev is initialized as a vector of -0.5's.
+        # but if we take the exp(-0.5), it returns a vector of 0.6065 (the standard deviations).
+        #If we would initialize it like the base net_arch, as a vector of zeroes, then the std would be exp(0) = 1.
+        # entropy of a Normal distribution with std 1 =~1.4189
+        # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived/1804829
+        # so this will be the first entropy value we will get before any backpropagation
+        # (this is good to know for debugging / to check if code works properly)
+        return actions_joint_log_proba, actions_distr_entropy
 
-        if deterministic == True:
-            # if we predict deterministically, we can just take the action means (most probable action from the distribution)
-            predicted_actions = action_means
-        elif deterministic == False:
-            # if we predict stochastically, we have to sample an action from our distribution,
-            # which represents our actual model
-            log_stdev = self.actor.log_stdev
-            stdev = log_stdev.exp()
-            stdev_vector = torch.ones_like(action_means) * stdev
-            actions_distribution = Normal(action_means, stdev_vector)
-            action_samples = actions_distribution.rsample()
-            predicted_actions = action_samples
-        predicted_value = value_estimate
-        # note: prediction here is deterministic; we take the action means (= the output of the actor network)
-        # we could also sample an action from our actor network instead (non-deterministic prediction),
-        # but if we predict we normally want to use the most likely prediction of our current model for performance evaluation
-        return predicted_actions, predicted_value, lstm_states, lstm_states_actor, lstm_states_critic
