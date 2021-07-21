@@ -38,7 +38,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                             seed: int,
                             retrain_data: bool,
 
-                            net_version: str,
+                            net_arch: str,
                             optimizer,
                             optimizer_learning_rate,
                             max_gradient_norm,
@@ -73,6 +73,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                             price_column_name: str="adjcp",
                             save_results: bool=True,
                             calculate_sharpe_ratio: bool=False,
+                            predict_deterministic: bool=False
                             ) -> None:
 
     """
@@ -321,10 +322,10 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             logger.info(f"validation_ending {validation_ending}")
             logger.info(f"testing_beginning {testing_beginning}")
             logger.info(f"testing_ending {testing_ending}")
-            logger.info(f"backtesting_beginning {backtesting_bull_beginning}")
-            logger.info(f"backtesting_ending {backtesting_bull_ending}")
-            logger.info(f"backtesting_beginning {backtesting_bear_beginning}")
-            logger.info(f"backtesting_ending {backtesting_bear_ending}")
+            logger.info(f"backtesting_bull_beginning {backtesting_bull_beginning}")
+            logger.info(f"backtesting_bull_ending {backtesting_bull_ending}")
+            logger.info(f"backtesting_bear_beginning {backtesting_bear_beginning}")
+            logger.info(f"backtesting_bear_ending {backtesting_bear_ending}")
             logger.info(f"global enddate of dataset: {enddate}, index of global enddate: {enddate_index}")
             logger.info(f"load_trained_model {load_trained_model}")
             logger.info(f"initial episode: {initial}")
@@ -524,13 +525,14 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                   critic_loss_coef=critic_loss_coef,
                                   entropy_loss_coef=entropy_loss_coef,
                                   env_step_version=env_step_version,
-                                  net_version=net_version,
+                                  net_arch=net_arch,
                                   optimizer=optimizer,
                                   optimizer_learning_rate=optimizer_learning_rate,
                                   max_gradient_norm=max_gradient_norm,
                                   total_timesteps_to_collect=len(train_data.index.unique()),
                                   num_epochs=num_epochs,
                                   batch_size=batch_size,
+                                  predict_deterministic=predict_deterministic,
                                   )
 
             logger.info(f"RETRAIN_DATA = {retrain_data} and current_episode_number {current_episode_number}:")
@@ -592,11 +594,11 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                             f"{testing_beginning} to {testing_ending}, (ep={current_episode_number}).======")
 
             test_start = time.time()
-            if net_version == "mlplstm_separate":
+            if net_arch == "mlplstm_separate":
                 lstm_hidden_state = None
                 lstm_hidden_state_actor = ppo_model.Brain.feature_extractor_actor.create_initial_lstm_state()
                 lstm_hidden_state_critic = ppo_model.Brain.feature_extractor_critic.create_initial_lstm_state()
-            elif net_version == "mlplstm_shared":
+            elif net_arch == "mlplstm_shared":
                 lstm_hidden_state = ppo_model.Brain.feature_extractor.create_initial_lstm_state()
                 lstm_hidden_state_actor = None
                 lstm_hidden_state_critic = None
@@ -610,15 +612,17 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             for j in range(len(test_data.index.unique())):
                 # use the trained model to predict actions using the test_obs we received far above when we setup the test env
                 # and run obs_test = env.reset()
-                action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = ppo_model.predict(new_obs=obs_test,
-                                                                                   env_step_version=env_step_version,
-                                                                                   n_assets=assets_dim,
-                                                                                   # only applicable if we are using lstm, else None
-                                                                                   new_lstm_obs=lstm_obs_test,
-                                                                                   lstm_state = lstm_hidden_state,
-                                                                                   lstm_state_actor=lstm_hidden_state_actor,
-                                                                                   lstm_state_critic=lstm_hidden_state_critic
-                                                                                   )
+                action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = \
+                    ppo_model.predict(new_obs=obs_test,
+                                      env_step_version=env_step_version,
+                                      predict_deterministic=predict_deterministic,
+                                      n_assets=assets_dim,
+                                      # only applicable if we are using lstm, else None
+                                      new_lstm_obs=lstm_obs_test,
+                                      lstm_state = lstm_hidden_state,
+                                      lstm_state_actor=lstm_hidden_state_actor,
+                                      lstm_state_critic=lstm_hidden_state_critic
+                                      )
                 # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
                 # and info (here empty, hence _, since we don't need it)
                 obs_test, lstm_obs_test, rewards, dones, _ = env_test.step(action)
@@ -755,11 +759,11 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bull, lstm_obs_backtest_bull = env_backtesting_bull.reset()
 
-        if net_version == "mlplstm_separate":
+        if net_arch == "mlplstm_separate":
             lstm_hidden_state = None
             lstm_hidden_state_actor = ppo_model.Brain.feature_extractor_actor.create_initial_lstm_state()
             lstm_hidden_state_critic = ppo_model.Brain.feature_extractor_critic.create_initial_lstm_state()
-        elif net_version == "mlplstm_shared":
+        elif net_arch == "mlplstm_shared":
             lstm_hidden_state = ppo_model.Brain.feature_extractor.create_initial_lstm_state()
             lstm_hidden_state_actor = None
             lstm_hidden_state_critic = None
@@ -783,15 +787,17 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = ppo_model.predict(new_obs=obs_backtest_bull,
-                                                                               env_step_version=env_step_version,
-                                                                               n_assets=assets_dim,
-                                                                               # only if using lstm, else None
-                                                                               new_lstm_obs=lstm_obs_backtest_bull,
-                                                                               lstm_state=lstm_hidden_state,
-                                                                               lstm_state_actor=lstm_hidden_state_actor,
-                                                                               lstm_state_critic=lstm_hidden_state_critic
-                                                                               )
+            action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = \
+                ppo_model.predict(new_obs=obs_backtest_bull,
+                                  env_step_version=env_step_version,
+                                  predict_deterministic=predict_deterministic,
+                                  n_assets=assets_dim,
+                                  # only if using lstm, else None
+                                  new_lstm_obs=lstm_obs_backtest_bull,
+                                  lstm_state=lstm_hidden_state,
+                                  lstm_state_actor=lstm_hidden_state_actor,
+                                  lstm_state_critic=lstm_hidden_state_critic
+                                  )
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bull, lstm_obs_backtest_bull, rewards, dones, _ = env_backtesting_bull.step(action)
@@ -863,11 +869,11 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
         # reset environment to obtain first observations (state representation vector)
         obs_backtest_bear, lstm_obs_backtest_bear = env_backtesting_bear.reset()
 
-        if net_version == "mlplstm_separate":
+        if net_arch == "mlplstm_separate":
             lstm_hidden_state = None
             lstm_hidden_state_actor = ppo_model.Brain.feature_extractor_actor.create_initial_lstm_state()
             lstm_hidden_state_critic = ppo_model.Brain.feature_extractor_critic.create_initial_lstm_state()
-        elif net_version == "mlplstm_shared":
+        elif net_arch == "mlplstm_shared":
             lstm_hidden_state = ppo_model.Brain.feature_extractor.create_initial_lstm_state()
             lstm_hidden_state_actor = None
             lstm_hidden_state_critic = None
@@ -890,15 +896,17 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
             # use the trained model to predict actions using the test_obs we received far above when we setup the test env
             # and run obs_test = env.reset()
             # we backtest with our final trained model, the one that was trained on all train data
-            action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = ppo_model.predict(new_obs=obs_backtest_bear,
-                                                                               env_step_version=env_step_version,
-                                                                               n_assets=assets_dim,
-                                                                               # only relevant if using lstm
-                                                                               new_lstm_obs=lstm_obs_backtest_bear,
-                                                                               lstm_state=lstm_hidden_state,
-                                                                               lstm_state_actor=lstm_hidden_state_actor,
-                                                                               lstm_state_critic=lstm_hidden_state_critic
-                                                                               )
+            action, _, lstm_hidden_state, lstm_hidden_state_actor, lstm_hidden_state_critic = \
+                ppo_model.predict(new_obs=obs_backtest_bear,
+                                  env_step_version=env_step_version,
+                                  predict_deterministic=predict_deterministic,
+                                  n_assets=assets_dim,
+                                  # only relevant if using lstm
+                                  new_lstm_obs=lstm_obs_backtest_bear,
+                                  lstm_state=lstm_hidden_state,
+                                  lstm_state_actor=lstm_hidden_state_actor,
+                                  lstm_state_critic=lstm_hidden_state_critic
+                                  )
             # take a step in the test environment and get the new test observation, reward, dones (a mask if terminal state True or False)
             # and info (here empty, hence _, since we don't need it)
             obs_backtest_bear, lstm_obs_backtest_bear, rewards, dones, _ = env_backtesting_bear.step(action)

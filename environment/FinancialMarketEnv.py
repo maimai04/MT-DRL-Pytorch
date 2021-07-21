@@ -190,7 +190,7 @@ class FinancialMarketEnv(gym.Env):
         if self.step_version == "paper":
             self.state = {"cash": [self.current_cash_weight],
                           "n_asset_holdings": self.current_n_asset_holdings}
-        elif self.step_version == "newNoShort":
+        elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
             self.state = {"cash_w": [self.current_cash_weight],
                           "asset_w": self.current_all_weights_startofday[:-1]} # adding all but cash weight (which is the final entry)
 
@@ -203,7 +203,7 @@ class FinancialMarketEnv(gym.Env):
         if self.iteration == 1 and self.steps_counter == 0:
             if self.step_version == "paper":
                 self.state_header = ["cash"] + [s + "_n_holdings" for s in self.asset_names]
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.state_header = ["cash_w"] + [s + "_w" for s in self.asset_names]
 
         # for each feature in the features list we passed in the init, we update the state dictionary for this current day;
@@ -338,14 +338,6 @@ class FinancialMarketEnv(gym.Env):
             # SAVING MEMORIES TO CSV
             # save dates vector alone to results (for debugging, analysis, plotting...)
             dates = pd.DataFrame({"datadate": self.memories["datadates"]})
-            #dates.to_csv(os.path.join(self.results_dir, "datadates",
-            #                            f"datadates"
-            #                            f"_{self.mode}"
-            #                            f"_{self.model_name}"
-            #                            f"_ep{self.iteration}" # episode
-            #                            f"_totalSteps_{self.steps_counter}"
-            #                            f"_finalStateCounter_{self.final_state_counter}"
-            #                            f".csv"))
             # if we are at the last step of the first episode, save header (stays the same for whole run,
             # # so no need to save again every time)
             if self.iteration == 1:
@@ -437,17 +429,13 @@ class FinancialMarketEnv(gym.Env):
             elif self.reward_measure == "semvarPenalty":
                 self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
                 if self.steps_counter >= self.performance_calculation_window-1:
-                    #print(f"steps: {self.steps_counter}")
                     semivar = _get_semivariance(window=self.performance_calculation_window)
                     log_U = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
                     self.reward = log_U - semivar
-                    #print(f"semivariance: {semivar}")
-                    #print(f"logU: {log_U}")
                 else:
                     self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
             else:
                 print("ERROR, no valid reward specified.")
-            #print("reward: ", self.reward)
             return None
 
         def _take_step(actions: np.array) -> list:
@@ -463,7 +451,7 @@ class FinancialMarketEnv(gym.Env):
                 begin_cash_value = self.state["cash"][0]
                 begin_n_asset_holdings = self.state["n_asset_holdings"]
 
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 # in the custom version, we take the values from the memory instead, because the cash value and asset
                 # holdings are not in the state vector
                 begin_cash_value = self.memories["cash_value"][-1]
@@ -552,11 +540,6 @@ class FinancialMarketEnv(gym.Env):
                 # delta_weight = new_weight (vector) - old_weights (vector)
                 delta_weight = target_weights - self.memories["all_weights_cashAtEnd"][-1][:-1]
 
-                #print("target_weights")
-                #print(target_weights)
-                #print("self.memories[all_weights_cashAtEnd][-1][:-1]")
-                #print(self.memories["all_weights_cashAtEnd"][-1][:-1])
-
                 # split weights into sell and buy actions (if -, sell; if +, buy)
                 argsort_delta_weight = np.argsort(delta_weight)
                 # get assets to be sold (if action -)
@@ -571,17 +554,9 @@ class FinancialMarketEnv(gym.Env):
                 # max_cash_to_distribute_for_buying amount. Else we would get negative cash positions (most of the time)
                 # and we don't simply want to buy stocks in the index order because then the last stocks might end up
                 # never having spare money to be bought.
-
-                #print("delta w")
-                #print(delta_weight)
-                #print("pf val")
-                #print(self.memories["portfolio_value"][-1])
-
                 max_cash_to_distribute_for_buying_after_tc = sum(delta_weight[delta_weight > 0]) \
                                                         * self.memories["portfolio_value"][-1] * \
                                                         (1-self.transaction_fee_percent)
-                #print("delta_weight")
-                #print(delta_weight)
 
                 # Note:
                 # max_cash_to_distribute_for_buying = delta_weight_to_buy * PF_value * (1-tc)
@@ -602,17 +577,31 @@ class FinancialMarketEnv(gym.Env):
                     exercised_actions = self._sell_stock(index, delta_weight[index], exercised_actions)
 
                 free_cash_to_distribute_for_buying_after_tc = self.memories["cash_value"][-1] * (1 - self.transaction_fee_percent)
-                #if self.mode == "train" and self.steps_counter <= 3:
-                    #print("cash")
-                    #print(self.memories["cash_value"][-1])
-                    #print("\n---max_cash_to_distribute_for_buying")
-                    #print(max_cash_to_distribute_for_buying_after_tc)
-                    #("---free_cash_to_distribute_for_buying")
-                    #print(free_cash_to_distribute_for_buying_after_tc)
                 delta_weight_new = (min(free_cash_to_distribute_for_buying_after_tc, max_cash_to_distribute_for_buying_after_tc) / \
                                     max_cash_to_distribute_for_buying_after_tc) * delta_weight
-                #print("delta_weight_new")
-                #print(delta_weight_new)
+                for index in buy_index:
+                    exercised_actions = self._buy_stock(index, delta_weight_new[index], exercised_actions)
+
+            elif self.step_version == "newNoShort2":
+                # in this version, we receive a vector of actions which include the cash weight at the first place
+                # we only exercise the action weights and keep the cash weight as a residual
+                target_weights_stocks = actions[1:]
+                delta_weight = target_weights_stocks - self.memories["all_weights_cashAtEnd"][-1][:-1]
+                argsort_delta_weight = np.argsort(delta_weight)
+                # get assets to be sold (if action -)
+                sell_index = argsort_delta_weight[:np.where(delta_weight < 0)[0].shape[0]]
+                # get assets to be bought (if action +)
+                buy_index = argsort_delta_weight[::-1][:np.where(delta_weight > 0)[0].shape[0]]
+                # create empty list which will be filled with sell / buy actions for each asset
+                exercised_actions = [0] * self.assets_dim
+                max_cash_to_distribute_for_buying_after_tc = sum(delta_weight[delta_weight > 0]) \
+                                                             * self.memories["portfolio_value"][-1] * \
+                                                             (1 - self.transaction_fee_percent)
+                for index in sell_index:  # index starting at 0
+                    exercised_actions = self._sell_stock(index, delta_weight[index], exercised_actions)
+                free_cash_to_distribute_for_buying_after_tc = self.memories["cash_value"][-1] * (1 - self.transaction_fee_percent)
+                delta_weight_new = (min(free_cash_to_distribute_for_buying_after_tc, max_cash_to_distribute_for_buying_after_tc) / \
+                                    max_cash_to_distribute_for_buying_after_tc) * delta_weight
                 for index in buy_index:
                     exercised_actions = self._buy_stock(index, delta_weight_new[index], exercised_actions)
 
@@ -622,7 +611,7 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.current_cash_balance = self.state["cash"][0]
                 self.current_n_asset_holdings = list(self.state["n_asset_holdings"])
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.current_cash_balance = self.memories["cash_value"][-1]
                 self.current_n_asset_holdings = self.memories["number_asset_holdings"][-1] # note: current asset holdings is a list, so indexing is correct
 
@@ -667,7 +656,7 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.state = {"cash": [self.current_cash_balance],
                               "n_asset_holdings": self.current_n_asset_holdings}
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.state = {"cash_w": [self.current_cash_weight],
                               "asset_w": self.current_all_weights_startofday[:-1]}
 
@@ -705,6 +694,7 @@ class FinancialMarketEnv(gym.Env):
             self.cost = 0
             self.sell_trades = 0
             self.buy_trades = 0
+
             return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, {}]
 
 
@@ -723,10 +713,12 @@ class FinancialMarketEnv(gym.Env):
         if self.step_version == "paper":
             # clip actions to be between action space limits (in paper [-1,1]
             actions = np.clip(actions, self.action_space.low, self.action_space.high)
-        elif self.step_version == "newNoShort":
+        elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
             # apply softmax again in sampled actions in order to make a vector of target weights
             # which are all between [0,1] and sum up to one together.
-            actions = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
+            #actions = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
+            pass
+
         # save the clipped / transformed policy actions
         self.memories["policy_actions_trans"].append(actions)
 
@@ -786,30 +778,13 @@ class FinancialMarketEnv(gym.Env):
             # action is the delta_weight (-)
             delta_weight = action
             delta_weight_tc = delta_weight * (1-self.transaction_fee_percent) * (1 - self.rebalance_penalty)
-
             # now we convert this to the number of money to desinvest
             # note: the weight_X is defined as "value of all stock X holdings" / "total pf value (incl.cash)"
             # and delta_weight_X is the (sell) action we take in order to get to the "target value of all stock X holdings" / "total pf value (incl. cash)"
             money_to_desinvest = abs(delta_weight_tc) * self.memories["portfolio_value"][-1]
-
-
             # number of assets to sell is then simply "money to desivnest in stock X" // "price of a stock X"
             max_n_assets_to_sell = math.ceil(money_to_desinvest / self.data[self.price_colname].values.tolist()[index])
             n_assets_to_sell = min(max_n_assets_to_sell, self.memories["number_asset_holdings"][-1][index])
-            #if self.mode == "train" and self.steps_counter <= 3 and index == 1:
-                #print("(sell) price to get if delta-weight used: ")
-                #print((abs(delta_weight) * self.memories["portfolio_value"][-1] // self.data[self.price_colname].values.tolist()[index] )*
-                #     self.data[self.price_colname].values.tolist()[index] * (1-self.transaction_fee_percent))
-                #print("(sell) price to get now: ")
-                #print(self.data[self.price_colname].values.tolist()[index] * n_assets_to_sell * (1 - self.transaction_fee_percent))
-                #print("delta_weight")
-                #print(delta_weight)
-                #print("portfolio_value all:")
-                #print(self.memories["portfolio_value"])
-                #print("portfolio_value last:")
-                #print(self.memories["portfolio_value"][-1])
-                #print("n_assets_to_sell")
-                #print(n_assets_to_sell)
             exercised_actions[index] = -n_assets_to_sell
             # update cash balance; cash new = cash old + price * n_assets sold*(1 - transaction cost)
             self.memories["cash_value"][-1] += self.data[self.price_colname].values.tolist()[index] * \
@@ -820,22 +795,12 @@ class FinancialMarketEnv(gym.Env):
                          n_assets_to_sell * self.transaction_fee_percent
             # update sell trades counter
             self.sell_trades += 1
-
-            #if self.mode == "train" and self.steps_counter <= 3:
-            #    print("\nmoney to desinvest in this stock (after tc):")
-            #    print(money_to_desinvest)
-            #    print("money freed (incl. tc):")
-            #    print(self.data[self.price_colname].values.tolist()[index] * \
-            #                         n_assets_to_sell * (1 - self.transaction_fee_percent))
-            #    print("current cash:")
-            #    print(self.state["cash"][0])
-
             return exercised_actions # here, exercised actions = number of stocks sold
 
         ### PERFORM SELLING USING FUNCTIONS DEFINED ABOVE
         if self.step_version == "paper":
             exercised_actions = _sell_paper(index, action, exercised_actions)
-        elif self.step_version == "newNoShort":
+        elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
             exercised_actions = _sell_newNoShort(index, action, exercised_actions)
         return exercised_actions
 
@@ -880,17 +845,10 @@ class FinancialMarketEnv(gym.Env):
             money_to_invest = delta_weight_tc * self.memories["portfolio_value"][-1]
             # convert in max. assets to buy. // takes the floor (rounds down)
             n_assets_to_buy = money_to_invest // self.data[self.price_colname].values.tolist()[index]
-
             exercised_actions[index] = n_assets_to_buy
             # update cash position: old cash - new cash(price * action * (1-cost))
             self.memories["cash_value"][-1] -= self.data[self.price_colname].values.tolist()[index] * \
                                      n_assets_to_buy * (1 + self.transaction_fee_percent)
-
-            #print("(buy) price to pay if delta-weight used: ")
-            #print((delta_weight * self.memories["portfolio_value"][-1] // self.data[self.price_colname].values.tolist()[index] )*
-            #      self.data[self.price_colname].values.tolist()[index] * (1+self.transaction_fee_percent))
-            #print("(buy) price to pay now: ")
-            #print(self.data[self.price_colname].values.tolist()[index] * n_assets_to_buy * (1 + self.transaction_fee_percent))
             # update asset holdings for the current asset: old holdings + action
             self.memories["number_asset_holdings"][-1][index] += n_assets_to_buy
             # update transaction cost counter: price * action * cost
@@ -898,22 +856,12 @@ class FinancialMarketEnv(gym.Env):
                          n_assets_to_buy * self.transaction_fee_percent
             # update buy trades counter
             self.buy_trades += 1
-
-            #if self.mode == "train" and self.steps_counter <= 3:
-            #    print("\nmoney to invest in this stock (after tc):")
-            #    print(money_to_invest)
-            #    print("money invested (incl. tc):")
-            #    print(self.data[self.price_colname].values.tolist()[index] * \
-            #                         n_assets_to_buy * (1 + self.transaction_fee_percent))
-            #    print("current cash:")
-            #    print(self.state["cash"][0])
-
             return exercised_actions
 
         ### PERFORM BUYING
         if self.step_version == "paper":
             exercised_actions = _buy_paper(index, action, exercised_actions)
-        elif self.step_version == "newNoShort":
+        elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
             exercised_actions = _buy_new(index, action, exercised_actions)
         return exercised_actions
 
@@ -975,7 +923,7 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.state = {"cash": [self.current_cash_balance],
                               "n_asset_holdings": self.current_n_asset_holdings}
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.state = {"cash_w": [self.current_cash_weight],
                               "asset_w": self.current_all_weights_startofday[:-1]}
 
@@ -983,7 +931,7 @@ class FinancialMarketEnv(gym.Env):
                 self.asset_names = self.data["tic"].unique()
                 if self.step_version == "paper":
                     self.state_header = ["cash"] + [s + "_n_holdings" for s in self.asset_names]
-                elif self.step_version == "newNoShort":
+                elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                     self.state_header = ["cash_w"] + [s + "_w" for s in self.asset_names]
 
             for feature in self.features_list:
@@ -1048,17 +996,9 @@ class FinancialMarketEnv(gym.Env):
                 starting_portfolio_value = self.current_cash_balance + \
                                            sum(np.array(self.current_n_asset_holdings) * np.array(
                                                previous_asset_prices))
-            if self.step_version == "newNoShort":
-                #print("previous state keys:")
-                #print(self.previous_state.keys())
-                #print("previous state PF value:")
-                #print(self.previous_state["portfolio_value"])
+            if self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 starting_portfolio_value = self.previous_state["portfolio_value"][0]
-                #print("starting_portfolio_value using previous state")
-                #print(starting_portfolio_value)
                 self.current_n_asset_holdings = np.array(self.previous_state["asset_w"]) * starting_portfolio_value / np.array(previous_asset_prices)
-                #print("current_n_asset_holdings")
-                #print(self.current_n_asset_holdings)
                 self.current_cash_balance = self.previous_state["cash_w"][0] * starting_portfolio_value
 
             # weights of each asset in terms of equity pf value = number of assets held * asset prices / equity portfolio value
@@ -1072,7 +1012,7 @@ class FinancialMarketEnv(gym.Env):
                 self.state = {"cash": [self.current_cash_balance],
                               "n_asset_holdings": self.current_n_asset_holdings}
 
-            elif self.step_version == "newNoShort":
+            elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 # here we already use cash weights, so no need for cash scaling
                 self.state = {"cash_w": [self.previous_state["cash_w"][0]],
                               "asset_w": self.current_all_weights_startofday[:-1]}

@@ -57,7 +57,7 @@ class settings:
 
     # ---------------LEAVE---------------
     ### define 10 randomly picked numbers to be used for seeding
-    SEEDS_LIST = [0, 5, 23, 7774]#, 11112,  45252, 80923, 223445, 444110]
+    SEEDS_LIST = [0, 5, 23, 7774, 11112]#,  45252, 80923, 223445, 444110]
     SEED = None # placeholder, will be overwritten in run file)
 
     ### returns current timestamp, mainly used for naming directories/ printout / logging to .txt
@@ -110,7 +110,7 @@ class data_settings:
     SINGLE_FEATURES = ["vixDiv100"] # not attached to a certain asset
 
     # only applied if lstm net arch chosen
-    LSTM_FEATURES = RETURNS_FEATURES + SINGLE_FEATURES
+    LSTM_FEATURES = RETURNS_FEATURES + RISK_INDICATORS + SINGLE_FEATURES
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
     FEATURES_MODE = "fm3"
@@ -134,15 +134,16 @@ class data_settings:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    STEP_VERSION = "paper"
+    #STEP_VERSION = "paper" # paperTanh
     #STEP_VERSION = "newNoShort"
+    STEP_VERSION = "newNoShort2"
 
     # ---------------LEAVE---------------
     if STEP_VERSION == "newNoShort":
         HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = None  # This is 0.0001.
-        REBALANCE_PENALTY = 0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
-    elif STEP_VERSION == "paper":
+        REBALANCE_PENALTY = 0#0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
+    elif STEP_VERSION == "paper" or "paperTanh":
         HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = 1e-4  # This is 0.0001.
         REBALANCE_PENALTY = None
@@ -218,11 +219,11 @@ class agent_params:
         """
         ### SETUP PARAMETERS
         # net architecture mode
-        #NET_VERSION = "mlp_separate" # todo: rm
-        #NET_VERSION = "mlplstm_separate" # todo: rm
+        #NET_ARCH = "mlp_separate" # todo: rm
+        #NET_ARCH = "mlplstm_separate" # todo: rm
 
-        NET_VERSION = "mlp_shared"
-        #NET_VERSION = "mlplstm_shared"
+        NET_ARCH = "mlp_shared"
+        #NET_ARCH = "mlplstm_shared"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
@@ -233,7 +234,7 @@ class agent_params:
         GAE_LAMBDA = 0.95
         CLIP_EPSILON = 0.2 #0.5#0.2
         CRITIC_LOSS_COEF = 0.5
-        ENTROPY_LOSS_COEF = 0.005 #0.01 #0.01
+        ENTROPY_LOSS_COEF = 0.005 #0.0001 #0.005 #0.01 #0.01
         MAX_GRADIENT_NORMALIZATION = 0.5
         MAX_KL_VALUE = None # not implemented
 
@@ -242,6 +243,8 @@ class agent_params:
         #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
         TOTAL_EPISODES_TO_TRAIN_BASE = 50#60 #10 # for initial training, later a little bit less if retrain==True)
         TOTAL_EPISODES_TO_TRAIN_CNT = 40#TOTAL_EPISODES_TO_TRAIN_BASE-10
+
+        PREDICT_DETERMINISTIC = True
 
 class paths:
     # ---------------LEAVE---------------

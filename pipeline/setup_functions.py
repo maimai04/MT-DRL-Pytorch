@@ -51,11 +51,12 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
                 strategy_mode: str = "ppoCustomBase",
                 features_mode: str = "",
                 reward_measure: str = "",
-                net_version: str = "",
+                net_arch: str = "",
                 env_step_version: str = "",
                 run_mode: str = "",
                 seed: int=None,
                 subdir_names: dict = {},
+                predict_deterministic: bool=False
                 ) -> list:
     """
     Functin to create directories at the beginning of each run, based on paths specified in the config.py file,
@@ -74,20 +75,22 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
                                    f"{now}"
                                    f"_{strategy_mode}"
                                    f"_{reward_measure}"
-                                   f"_{net_version}"
+                                   f"_{net_arch}"
                                    f"_{env_step_version}"
                                    f"_{features_mode}"
-                                   f"_{run_mode}")
+                                   f"_{run_mode}"
+                                   f"_det{predict_deterministic}")
         os.makedirs(results_dir) # os.makedirs() method creates all unavailable/missing directories under the specified path
 
         ### TRAINED MODEL DIRECTORY (saving the trained DRL models)
         trained_dir = os.path.join(trained_models_path, f"{now}"
                                                         f"_{strategy_mode}"
                                                         f"_{reward_measure}"
-                                                        f"_{net_version}"
+                                                        f"_{net_arch}"
                                                         f"_{env_step_version}"
                                                         f"_{features_mode}"
-                                                        f"_{run_mode}")
+                                                        f"_{run_mode}"
+                                                        f"_det{predict_deterministic}")
         os.makedirs(trained_dir)
         return [results_dir, trained_dir]
 
@@ -150,7 +153,7 @@ def config_logging_to_txt(results_subdir,
                           clip_list,
                           critic_loss_coef_hpt,
                           entropy_loss_coef_hpt,
-                          net_version,
+                          net_arch,
                           batch_size,
                           num_epochs,
                           optimizer,
@@ -163,6 +166,7 @@ def config_logging_to_txt(results_subdir,
                           max_gradient_norm,
                           total_episodes_to_train_base,
                           total_episodes_to_train_cont,
+                          predict_deterministic,
                           ) -> None:
     """
     Writes all configurations and related parameters into the config_log.txt file.
@@ -238,7 +242,7 @@ def config_logging_to_txt(results_subdir,
 
     if settings.STRATEGY_MODE == "ppoCustomBase":
         with open(txtfile_path, "a") as text_file:
-            text_file.write(f"NET_VERSION                   : {net_version}\n"
+            text_file.write(f"NET_VERSION                   : {net_arch}\n"
                             f"BATCH_SIZE                    : {batch_size}\n"
                             f"NUM_EPOCHS                    : {num_epochs}\n"
                             f"OPTIMIZER                     : {optimizer}\n"
@@ -251,6 +255,7 @@ def config_logging_to_txt(results_subdir,
                             f"MAX_GRADIENT_NORMALIZATION    : {max_gradient_norm}\n"
                             f"TOTAL_TIMESTEPS_TO_COLLECT (Base)    : {total_episodes_to_train_base}\n"
                             f"TOTAL_TIMESTEPS_TO_COLLECT (Cont)    : {total_episodes_to_train_cont}\n"
+                            f"PREDICT_DETERMINISTIC         : {predict_deterministic}\n"
                             )
     elif settings.STRATEGY_MODE == "ppo": # todo: rm
         with open(txtfile_path, "a") as text_file:
