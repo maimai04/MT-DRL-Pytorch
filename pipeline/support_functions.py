@@ -200,10 +200,15 @@ def get_model(train_environment,
         buffer_size = number_train_data_points
         logger.info(f"buffer size:  {buffer_size}")
         logger.info(f"number of train data points passed: {number_train_data_points}")
+
+        if env_step_version == "newNoShort2":
+            assets_dim_buffer = assets_dim + 1 # one for cash
+        else:
+            assets_dim_buffer = assets_dim
         buffer = OnPolicyBuffer(buffer_size=buffer_size,
                                 obs_shape=(shape_observation_space,),
                                 lstm_obs_shape=(shape_lstm_observation_space,),
-                                actions_number=assets_dim,
+                                actions_number=assets_dim_buffer,
                                 )
         if now_hptuning or use_tuned_params:
             if now_hptuning: # todo: rm
