@@ -364,7 +364,10 @@ class FinancialMarketEnv(gym.Env):
                             keydf.columns = self.asset_names
                         # if each element i a key has the same length as asset names + 1 then the key is going to be the
                         # asset + cash weights key, so we want the header to be asset names + cash
-                        if len(self.memories[key][0]) == len(self.asset_names)+1:
+                        if len(self.memories[key][0]) == len(self.asset_names)+1 and self.step_version == "newNoShort2" \
+                            and key in ["exercised_actions", "policy_actions", "policy_actions_trans"]:
+                            keydf.columns = ["Cash"] + list(self.asset_names)
+                        elif len(self.memories[key][0]) == len(self.asset_names)+1:
                             keydf.columns = list(self.asset_names) + ["Cash"]
                     except:
                         pass

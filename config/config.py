@@ -25,8 +25,8 @@ class settings:
     #STRATEGY_MODE = "ppo" # todo: rm
     STRATEGY_MODE = "ppoCustomBase"
 
-    #REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
-    REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
+    REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
+    #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
     #REWARD_MEASURE = "semvarPenalty"
 
@@ -113,7 +113,7 @@ class data_settings:
     LSTM_FEATURES = RETURNS_FEATURES + RISK_INDICATORS + SINGLE_FEATURES
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm3"
+    FEATURES_MODE = "fm2"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -134,12 +134,12 @@ class data_settings:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    #STEP_VERSION = "paper" # paperTanh
+    STEP_VERSION = "paper" # paperTanh
     #STEP_VERSION = "newNoShort"
-    STEP_VERSION = "newNoShort2"
+    #STEP_VERSION = "newNoShort2"
 
     # ---------------LEAVE---------------
-    if STEP_VERSION == "newNoShort":
+    if STEP_VERSION == "newNoShort" or STEP_VERSION == "newNoShort2":
         HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = None  # This is 0.0001.
         REBALANCE_PENALTY = 0#0.2 # if 0, no penalty, if 1, so much penalty that no change in weight

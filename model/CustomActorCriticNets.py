@@ -220,7 +220,7 @@ class ActorNet(nn.Module):
         self.log_stdev = torch.nn.Parameter(data=torch.as_tensor(log_stdev), requires_grad=True)
     # in case we are using the "newNoShort" version of the step_version (see documentation),
     # we have to add a softmax layer at the end (because we want to get actions = target portfolio weights)
-    if env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+    if env_step_version == "newNoShort" or env_step_version == "newNoShort2":
         self.action_mean_net = nn.Sequential(
           nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
           #nn.Softmax(),
@@ -533,7 +533,7 @@ class BrainActorCritic(nn.Module):
             # but we could also use something else
             actions_distribution = Normal(action_means, stdev_vector)
             # see also: https://pytorch.org/docs/stable/distributions.html
-        elif self.env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+        elif self.env_step_version == "newNoShort" or self.env_step_version == "newNoShort2":
             concentrations = action_means.exp() # we interpret the output of the actor (named action means)
                                                 # as log alpha vector (=Dirichlet concentrations), and we transform from [-inf, inf] interval
                                                 # to a [0, inf] interval
@@ -616,7 +616,7 @@ class BrainActorCritic(nn.Module):
             else:
                 actions_distr_entropy = actions_distr_entropy.sum()
         # here we use Dirichlet distribution, which already gives a joint log prob and entropy
-        elif self.env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+        elif self.env_step_version == "newNoShort" or self.env_step_version == "newNoShort2":
             actions_joint_log_proba = actions_log_probs
             actions_distr_entropy = actions_distr_entropy
         else:

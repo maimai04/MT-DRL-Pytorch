@@ -829,7 +829,7 @@ class PPO_algorithm():
             # asset prices are also not normalized in the env, because they are practical to use for calculating how
             # many stocks we can buy
             obs[n_assets+1: n_assets+n_assets+1] = obs[n_assets+1: n_assets+n_assets+1] * 1e-2
-        elif env_step_version == "newNoShort" or self.step_version == "newNoShort2":
+        elif env_step_version == "newNoShort" or env_step_version == "newNoShort2":
             # in this case, we already have cash weight instead of cash and asset weights instead of asset holdings
             # we only need to scale the asset prices which are there as well
             obs[n_assets+1: n_assets+n_assets+1] = obs[n_assets+1: n_assets+n_assets+1] * 1e-2
