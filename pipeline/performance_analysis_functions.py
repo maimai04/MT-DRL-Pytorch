@@ -2,6 +2,7 @@ from typing import Tuple
 import glob
 import pandas as pd
 import numpy as np
+import ffn
 # own libraries
 from config.config import *
 
@@ -256,7 +257,7 @@ def calculate_and_save_performance_metrics(results_dict: dict,
     btbull_perf = backtest_bull_dict["pfvalue"].set_index("datadate")["pfvalue"].calc_stats()
     btbear_perf = backtest_bear_dict["pfvalue"].set_index("datadate")["pfvalue"].calc_stats()
 
-    # now we can access the statistics like this, for example: (ann = annuaized)
+    # now we can access the statistics like this, for example: (ann = annualized)
     sharpe_ratio_daily_ann = perf.daily_sharpe
     total_return = perf.total_return
     avg_daily_return_ann = perf.daily_mean

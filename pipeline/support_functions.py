@@ -32,6 +32,7 @@ def get_environment(df: pd.DataFrame,
                     initial: bool,  # for validation, we always have an "initial state"
                     results_dir: str,
                     reset_counter: int,
+                    net_arch: str,
                     # env and agent parameters
                     strategy_mode: str,
                     features_list: list,
@@ -120,6 +121,7 @@ def get_environment(df: pd.DataFrame,
                                  rebalance_penalty=rebalance_penalty,
                                  reward_measure=reward_measure,
                                  total_episodes_to_train=total_episodes_to_train,
+                                 net_arch=net_arch,
                                  )
     else:
         print("ERROR - no valid strategy mode passed. cannot create instance env_train.")

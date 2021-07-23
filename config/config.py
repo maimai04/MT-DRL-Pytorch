@@ -30,8 +30,8 @@ class settings:
     #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
     #REWARD_MEASURE = "semvarPenalty"
 
-    RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
-    #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
+    #RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
+    RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
 
     ### Set dates
     # train
@@ -113,7 +113,7 @@ class data_settings:
     LSTM_FEATURES = RETURNS_FEATURES + RISK_INDICATORS + SINGLE_FEATURES
 
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm2"
+    FEATURES_MODE = "fm3"
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -129,7 +129,22 @@ class data_settings:
         SINGLE_FEATURES_LIST = SINGLE_FEATURES
         LSTM_FEATURES_LIST = LSTM_FEATURES
     elif FEATURES_MODE == "fm4":
-        pass
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RISK_INDICATORS# + RETURNS_FEATURES
+        SINGLE_FEATURES_LIST = SINGLE_FEATURES
+        LSTM_FEATURES_LIST = LSTM_FEATURES
+    elif FEATURES_MODE == "fm5":
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RETURNS_FEATURES
+        SINGLE_FEATURES_LIST = SINGLE_FEATURES
+        LSTM_FEATURES_LIST = LSTM_FEATURES
+    elif FEATURES_MODE == "fm6":
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS
+        SINGLE_FEATURES_LIST = SINGLE_FEATURES
+        LSTM_FEATURES_LIST = LSTM_FEATURES
+    elif FEATURES_MODE == "fm7": # this fetaure mode is the one where we use lstm for return, vola and vis
+        # and CUT AWAY these fetaures from the mlp in the Brain
+        FEATURES_LIST = PRICE_FEATURES + TECH_INDICATORS + RISK_INDICATORS + RETURNS_FEATURES
+        SINGLE_FEATURES_LIST = SINGLE_FEATURES
+        LSTM_FEATURES_LIST = RETURNS_FEATURES + RISK_INDICATORS + SINGLE_FEATURES
     else:
         print("error (config): features list not found, cannot assign features mode.")
 
@@ -141,7 +156,7 @@ class env_params:
     # ---------------LEAVE---------------
     if STEP_VERSION == "newNoShort" or STEP_VERSION == "newNoShort2":
         HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
-        REWARD_SCALING = None  # This is 0.0001.
+        REWARD_SCALING = 1e-4  # This is 0.0001.
         REBALANCE_PENALTY = 0#0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
     elif STEP_VERSION == "paper" or "paperTanh":
         HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
@@ -222,8 +237,8 @@ class agent_params:
         #NET_ARCH = "mlp_separate" # todo: rm
         #NET_ARCH = "mlplstm_separate" # todo: rm
 
-        NET_ARCH = "mlp_shared"
-        #NET_ARCH = "mlplstm_shared"
+        #NET_ARCH = "mlp_shared"
+        NET_ARCH = "mlplstm_shared"
 
         ### HYPERPARAMETERS
         BATCH_SIZE = 64
