@@ -215,7 +215,11 @@ if __name__ == "__main__":
     shape_observation_space = n_features * assets_dim + assets_dim + 1 + n_single_features # +1 for cash
     shape_lstm_observation_space = n_features_lstm * assets_dim + n_single_features_lstm
 
-    # we want to be able to summarize some metrics / üerformance metrics and plot some plots
+    if net_arch == "mlplstm_shared" or net_arch == "mlplstm_separate":
+        shape_observation_space = shape_observation_space - shape_lstm_observation_space
+        print("shape_observation_space")
+        print(shape_observation_space)
+    # we want to be able to summarize some metrics / performance metrics and plot some plots
     # for all seeds together (e.g. make a plot of changes in portfolio value vs. time for each seed in order to compare,
     # and calculate medium reward, max. drawdown for all seeds, sharpe ratio
     # and because I have to run many runs, I don't want to do this separately for every run by hand

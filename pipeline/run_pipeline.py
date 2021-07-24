@@ -408,6 +408,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                         save_results=True,
                                         calculate_sharpe_ratio=False,
                                         total_episodes_to_train=total_episodes_to_train,
+                                        net_arch=net_arch
                                         )
 
 
@@ -447,6 +448,8 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                       save_results=True,
                                       calculate_sharpe_ratio=False,
                                       total_episodes_to_train=total_episodes_to_train,
+                                      net_arch=net_arch
+
                                       )
             env_val.seed(seed)
             env_val.action_space.seed(seed)
@@ -484,6 +487,8 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                         reward_scaling=reward_scaling,
                                         price_column_name=price_column_name,
                                         reward_measure=reward_measure,
+                                       net_arch=net_arch
+
                                        )
 
 
@@ -751,6 +756,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                                reward_scaling=reward_scaling,
                                                price_column_name=price_column_name,
                                                reward_measure=reward_measure,
+                                               net_arch=net_arch
                                                )
 
 
@@ -862,6 +868,7 @@ def run_rolling_window_setup(df: pd.DataFrame, # todo: rename in rolling window
                                                reward_scaling=reward_scaling,
                                                price_column_name=price_column_name,
                                                reward_measure=reward_measure,
+                                               net_arch=net_arch
                                                )
 
         env_backtesting_bear.seed(seed)

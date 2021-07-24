@@ -29,7 +29,7 @@ class FeatureExtractorNet(nn.Module):
                  observations_size: int = None, # usually n_assets * n_asset_features + 1 (cash) + 1 (vix)
                  mid_features_size: int = 64, # number of neurons in the mlp layer
                  hidden_size: int = 64,
-                 net_arch: str = "mlp_separate",
+                 net_arch: str = "",
                  lstm_observations_size: int = None,  # usually n_assets (returns) + 1 (vix)
                  lstm_hidden_size: int = 64, # number of neurons in the lstm layer
                  lstm_num_layers: int = 2, # how many lstm layers; is a parameter one can directly pass to the nn.LSTM
@@ -197,8 +197,8 @@ class ActorNet(nn.Module):
                mid_features_size: int = 64,
                # hidden size in hidden layer, if there is any
                hidden_size: int = 64,
-               net_arch: str = "mlp_separate",
-               env_step_version: str = "paper",
+               net_arch: str = "",
+               env_step_version: str = "",
                ):
     """
     mid_features_size  : size of the observation space / encoded features by feature extractor

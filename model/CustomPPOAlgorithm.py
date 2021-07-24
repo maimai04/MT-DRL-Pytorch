@@ -120,6 +120,7 @@ class PPO_algorithm():
 
         # get first observation from training environment
         obs, lstm_obs = self.Env.reset(day=self.Env_firstday)#, initial=True)
+        #print("ppo: len obs: "+str(len(obs)))
 
         #print("(PPO) lstm obs: ")
         #print(lstm_obs)
@@ -149,7 +150,7 @@ class PPO_algorithm():
         #print(obs)
 
         #self.logger.info("train env reset, first obs: ")
-        #self.logger.info(obs[0:100]) # to check if the observations are correct
+        self.logger.info(obs[0:100]) # to check if the observations are correct
         #self.logger.info("data ", self.Env.data)
 
         # reset the Buffer in order to empty storage from previously collected trajectories
