@@ -48,10 +48,9 @@ if __name__ == "__main__":
     # DATES
     global_startdate_train = settings.STARTDATE_TRAIN
     global_enddate_train = settings.ENDDATE_TRAIN
-    #TODO
+
     startdate_backtesting_bull = settings.STARTDATE_BACKTESTING_BULL
     enddate_backtesting_bull = settings.ENDDATE_BACKTESTING_BULL
-
     startdate_backtesting_bear = settings.STARTDATE_BACKTESTING_BEAR
     enddate_backtesting_bear = settings.ENDDATE_BACKTESTING_BEAR
 
@@ -67,15 +66,6 @@ if __name__ == "__main__":
     reward_scaling = env_params.REWARD_SCALING
     rebalance_penalty = env_params.REBALANCE_PENALTY
 
-    # HP TUNING PARAMS 3 todo: rm
-    now_hptuning = hptuning_config.now_hptuning
-    only_hptuning = hptuning_config.only_hptuning
-    gamma_list = hptuning_config.GAMMA_LIST
-    gae_lam_list = hptuning_config.GAE_LAMBDA_LIST
-    clip_list = hptuning_config.CLIP_EPSILON_LIST
-    critic_loss_coef_hpt = hptuning_config.CRITIC_LOSS_COEF_LIST
-    entropy_loss_coef_hpt = hptuning_config.ENTROPY_LOSS_COEF_LIST
-
     # AGENT PARAMS & HYPERPARAMETER
     net_arch = agent_params.ppoCustomBase.NET_ARCH
     batch_size = agent_params.ppoCustomBase.BATCH_SIZE
@@ -85,16 +75,14 @@ if __name__ == "__main__":
     gamma = agent_params.ppoCustomBase.GAMMA
     gae_lam = agent_params.ppoCustomBase.GAE_LAMBDA
     clip_epsilon = agent_params.ppoCustomBase.CLIP_EPSILON
-    clip = clip_epsilon # todo
     critic_loss_coef = agent_params.ppoCustomBase.CRITIC_LOSS_COEF
     entropy_loss_coef = agent_params.ppoCustomBase.ENTROPY_LOSS_COEF
     max_gradient_norm = agent_params.ppoCustomBase.MAX_GRADIENT_NORMALIZATION
     predict_deterministic = agent_params.ppoCustomBase.PREDICT_DETERMINISTIC
 
     # LEARNING PARAMS
-    total_timesteps_to_collect = agent_params.ppoCustomBase.TOTAL_TIMESTEPS_TO_COLLECT
     total_episodes_to_train_base = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN_BASE
-    total_episodes_to_train_cont = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN_CNT
+    #total_episodes_to_train_cont = agent_params.ppoCustomBase.TOTAL_EPISODES_TO_TRAIN_CNT
 
 
     #### SETUP DIRECTORIES AND LOGGINGS
@@ -119,15 +107,24 @@ if __name__ == "__main__":
 
     # write all parameters from config.py file into the config_log.txt file in folder _LOGGING
     # so later this file can be consulted to uniquely identify each run and its configurations
-    config_logging_to_txt(results_subdir=results_dir,
+    config_logging_to_txt(results_subdir=results_dir, # paths
                           trained_subdir=trained_dir,
                           logsave_path=logsave_path,
+                          data_path=data_path,
+                          raw_data_path=raw_data_path,
+                          preprocessed_data_path=preprocessed_data_path,
+                          trained_models_path=trained_models_path,
+                          results_path=results_path,
+                          subdir_names=subdir_names,
+                          preprocessed_data_file=preprocessed_data_file,
                           now=now,
                           seeds_list=seeds_list,
+                          # settings for which strategy we use
                           strategy_mode =strategy_mode,
-                          reward_measure =reward_measure,
+                          reward_measure=reward_measure,
                           retrain_data =retrain_data,
                           run_mode = run_mode,
+                          # dates and dataset country
                           global_startdate_train = global_startdate_train,
                           global_enddate_train = global_enddate_train,
                           roll_window = roll_window,
@@ -135,31 +132,20 @@ if __name__ == "__main__":
                           enddate_backtesting_bull = enddate_backtesting_bull,
                           startdate_backtesting_bear = startdate_backtesting_bear,
                           enddate_backtesting_bear = enddate_backtesting_bear,
-                          env_step_version = env_step_version,
+                          country=country,
+                          # environment parameters
+                          env_step_version=env_step_version,
                           rebalance_penalty=rebalance_penalty,
                           hmax_normalize = hmax_normalize,
                           initial_cash_balance = initial_cash_balance,
                           transaction_fee = transaction_fee,
                           reward_scaling =reward_scaling,
-                          country = country,
+                          # features and features mode
                           features_list = features_list,
                           single_features_list = single_features_list,
                           lstm_features_list=lstm_features_list,
                           features_mode =features_mode,
-                          data_path = data_path,
-                          raw_data_path = raw_data_path,
-                          preprocessed_data_path = preprocessed_data_path,
-                          trained_models_path = trained_models_path,
-                          results_path = results_path,
-                          subdir_names =subdir_names,
-                          preprocessed_data_file =preprocessed_data_file,
-                          now_hptuning = now_hptuning,
-                          only_hptuning = only_hptuning,
-                          gamma_list = gamma_list,
-                          gae_lam_list = gae_lam_list,
-                          clip_list = clip_list,
-                          critic_loss_coef_hpt = critic_loss_coef_hpt,
-                          entropy_loss_coef_hpt = entropy_loss_coef_hpt,
+                          # ppo agent parameters
                           net_arch = net_arch,
                           batch_size = batch_size,
                           num_epochs = num_epochs,
@@ -172,7 +158,7 @@ if __name__ == "__main__":
                           entropy_loss_coef = entropy_loss_coef,
                           max_gradient_norm = max_gradient_norm,
                           total_episodes_to_train_base = total_episodes_to_train_base,
-                          total_episodes_to_train_cont = total_episodes_to_train_cont,
+                          #total_episodes_to_train_cont = total_episodes_to_train_cont,
                           predict_deterministic=predict_deterministic
                         )
 
@@ -207,25 +193,20 @@ if __name__ == "__main__":
                         feature_cols=features_list,
                         single_feature_cols=single_features_list,
                         lstm_cols=lstm_features_list,
-                        #date_column=data_settings.DATE_COLUMN,
-                        #base_cols=data_settings.BASE_DF_COLS,
                         )
     # Define the shape of the observation space (this we also need to provide to the environment to create the state space)
     # Shape = [Current Balance]+[prices 1-30]+[owned shares 1-30] +[macd 1-30]+ [rsi 1-30] + [cci 1-30] + [adx 1-30]
     shape_observation_space = n_features * assets_dim + assets_dim + 1 + n_single_features # +1 for cash
     shape_lstm_observation_space = n_features_lstm * assets_dim + n_single_features_lstm
-
+    # if we use an lstm, we use log returns, vola and VIX as lstm features to get the hidden states.
+    # we don't want to use the same fetaures in the feed forward part (FFN) of the feature extractor in parallel,
+    # so we need to also shorten the shape space for the FFN
     if net_arch == "mlplstm_shared" or net_arch == "mlplstm_separate":
         shape_observation_space = shape_observation_space - shape_lstm_observation_space
-        print("shape_observation_space")
-        print(shape_observation_space)
-    # we want to be able to summarize some metrics / performance metrics and plot some plots
-    # for all seeds together (e.g. make a plot of changes in portfolio value vs. time for each seed in order to compare,
-    # and calculate medium reward, max. drawdown for all seeds, sharpe ratio
-    # and because I have to run many runs, I don't want to do this separately for every run by hand
-    # However, that also means that the whole run is going to take a little longer (since there will be a small time loss
-    # for plotting / calculating summaries
+        #print("shape_observation_space")
+        #print(shape_observation_space)
 
+    # define a logger for all seeds (the whole run)
     common_logger = custom_logger(seed="allSeeds",
                                   logging_path=logsave_path,
                                   level=logging.DEBUG)
@@ -239,13 +220,14 @@ if __name__ == "__main__":
     common_logger.info("(main) shape lstm observation space: " + str(shape_lstm_observation_space))
     common_logger.info(f"(main) number of columns (all features used): {str(n_features)}, number of stocks: {str(assets_dim)}")
 
-    # begin the run count (one whole run per seed)
+    # begin the run count (one whole run per seed), variable only used for logging
     # Note: the seeds are needed because there is some randomness involved in the whole process, namely:
     # in the beginning, our policy is basically random and samples from the defined action space.
     run_count = 0
     for seed in settings.SEEDS_LIST:
         run_count += 1
 
+        # define anothr logger but specifically for the current seed
         logger = custom_logger(seed=seed,
                                logging_path=logsave_path,
                                level=logging.DEBUG,
@@ -266,15 +248,13 @@ if __name__ == "__main__":
 
         #### RUN MODEL SETUP
         ####-------------------------------
-        # run the chosen setup (here: expanding window)
-        logger.info("Run expanding window setup.")
+        logger.info("Run rolling window setup.")
         run_rolling_window_setup(df=data,
                                    results_dir=results_subdir,
                                    trained_dir=trained_subdir,
-                                   assets_dim=assets_dim,
+                                   assets_dim=assets_dim, # numbe rof assets
                                    shape_observation_space=shape_observation_space,
                                    shape_lstm_observation_space=shape_lstm_observation_space,
-
                                    logger=logger,
                                    strategy_mode=strategy_mode,
                                    seed=seed,
@@ -289,16 +269,13 @@ if __name__ == "__main__":
                                    global_enddate_backtesting_bear=enddate_backtesting_bear,
                                    retrain_data=retrain_data,
 
-                                   now_hptuning=hptuning_config.now_hptuning,
-                                   only_hptuning=hptuning_config.only_hptuning,
-
                                    gamma=gamma,
                                    gae_lam=gae_lam,
                                    clip=clip_epsilon,
                                    critic_loss_coef=critic_loss_coef,
                                    entropy_loss_coef=entropy_loss_coef,
                                    total_episodes_to_train_base=total_episodes_to_train_base,
-                                   total_episodes_to_train_cont=total_episodes_to_train_cont,
+                                   #total_episodes_to_train_cont=total_episodes_to_train_cont,
 
                                    net_arch=net_arch,
                                    optimizer=optimizer,
@@ -322,21 +299,17 @@ if __name__ == "__main__":
                                  predict_deterministic=predict_deterministic,
         )
 
-
-
-
-    if not hptuning_config.only_hptuning:
-        #############################################################
-        #         PERFORMANCE CALCULATION ACROSS ALL SEEDS          #
-        #############################################################
-        common_logger.info("Summarizing whole run performance across all seeds.")
-        perf_start = time.time()
-        calculate_performance_measures(run_path=results_dir,
-                                       level="run",
-                                       seed=seed,
-                                       mode="test",
-                                       logger=common_logger,
-                                       seeds_list=seeds_list)
-        common_logger.info("Summarizing whole run performance across all seeds finished.")
-        perf_end = time.time()
-        common_logger.info(f"Performance summary over all seeds took: " + str((perf_start - perf_end) / 60) + " minutes")
+    #############################################################
+    #         PERFORMANCE CALCULATION ACROSS ALL SEEDS          #
+    #############################################################
+    common_logger.info("Summarizing whole run performance across all seeds.")
+    perf_start = time.time()
+    calculate_performance_measures(run_path=results_dir,
+                                   level="run",
+                                   seed=seed,
+                                   mode="test",
+                                   logger=common_logger,
+                                   seeds_list=seeds_list)
+    common_logger.info("Summarizing whole run performance across all seeds finished.")
+    perf_end = time.time()
+    common_logger.info(f"Performance summary over all seeds took: " + str((perf_start - perf_end) / 60) + " minutes")

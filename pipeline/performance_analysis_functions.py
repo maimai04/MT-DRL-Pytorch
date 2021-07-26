@@ -11,7 +11,6 @@ from config.config import *
 ########################################################################
 
 def calculate_performance_measures(run_path: str, # path where the target results are saved for the whole run
-                                   # whether the results are calculated for one seed or across all seeds (whole run)
                                    seed: int,
                                    seeds_list: list=None, # only needed for level="run"
                                    level="seed", #"run"
@@ -22,32 +21,29 @@ def calculate_performance_measures(run_path: str, # path where the target result
     # if we aggregate performances for one seed
     if level == "seed":
         # we get the path to the performance files for this current seed
-        seed_path = run_path
+        seed_path = run_path # Note: here, run_path already contains the seed folder
         backtest_bull_path = os.path.join(seed_path, "backtest_bull")
         backtest_bear_path = os.path.join(seed_path, "backtest_bear")
-
-        # Note: here, run_path already containst the seed folder
-
         # get results for one seed
         results_dict, backtest_bull_dict, backtest_bear_dict, _, _, _, _ = \
             get_results_dict_for_one_seed(seed_path=seed_path,
                                           backtest_bull_path=backtest_bull_path,
                                           backtest_bear_path=backtest_bear_path,
                                           mode="test")
-
+        # calculate and save the performance metrics on the test set and backtest set
         calculate_and_save_performance_metrics(results_dict=results_dict,
                                                backtest_bull_dict=backtest_bull_dict,
                                                backtest_bear_dict=backtest_bear_dict,
                                                save_path=seed_path,
                                                seed=seed,
                                                mode="test")
-    # if we aggregate performances for all seeds
+    # if we aggregate performances for all seeds, over a whole run:
     if level == "run":
         li = []
         # for every seed in the list of seeds
         for seed in seeds_list:
             seed_path = os.path.join(run_path, "randomSeed"+str(seed))
-            #seed_path = os.path.join(run_path, "agentSeed" + str(seed)) # todo: deprec.
+
             # get the performance metrics summary df for the current seed
             # Note: here, run_path does not contain the seed oflder but is one level higher,
             # therefore we need to create the seed path for each seed first
@@ -71,7 +67,7 @@ def get_results_dict_for_one_seed(seed_path: str,
                                   backtest_bull_path: str,
                                   backtest_bear_path: str,
                                   mode="test",
-                                  ) -> Tuple[dict, dict, pd.DataFrame, dict, dict]:
+                                  ):
     # performance paths for FOLDERS
     pfvalue_path = os.path.join(seed_path, "portfolio_value")
     reward_path = os.path.join(seed_path, "rewards")
@@ -99,7 +95,7 @@ def get_results_dict_for_one_seed(seed_path: str,
     btbear_exer_actions_path = os.path.join(backtest_bear_path, "exercised_actions")
     btbear_state_mem_path = os.path.join(backtest_bear_path, "state_memory")
 
-    # create dictionarys with results paths of the folders aggregated
+    # create dictionaries with results paths of the folders aggregated
     results_dict = {"pfvalue": glob.glob(os.path.join(pfvalue_path, f"*{mode}*.csv")),
                    "reward": glob.glob(os.path.join(reward_path, f"*{mode}*.csv")),
                    "all_weights": glob.glob(os.path.join(all_weights_path, f"*{mode}*.csv")),
@@ -234,7 +230,7 @@ def get_results_dict_for_one_seed(seed_path: str,
         # include the results in the dictionary
         backtest_bear_dicty.update({key: df})
 
-    # the last four outputs are optional, just used for debugging
+    # the last four outputs are optional, just used for debugging, only the first 3 are important
     return results_dicty, backtest_bull_dicty, backtest_bear_dicty,  state_header_df, results_dict, backtest_bull_dict, backtest_bear_dict
 
 

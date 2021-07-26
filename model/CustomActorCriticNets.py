@@ -1,5 +1,4 @@
 from typing import Tuple
-
 import torch
 from torch import nn
 from torch.distributions import Normal, Dirichlet
@@ -30,8 +29,9 @@ class FeatureExtractorNet(nn.Module):
                  mid_features_size: int = 64, # number of neurons in the mlp layer
                  hidden_size: int = 64,
                  net_arch: str = "",
+                 # for lstm
                  lstm_observations_size: int = None,  # usually n_assets (returns) + 1 (vix)
-                 lstm_hidden_size: int = 64, # number of neurons in the lstm layer
+                 lstm_hidden_size: int = 32, # number of neurons in the lstm layer
                  lstm_num_layers: int = 2, # how many lstm layers; is a parameter one can directly pass to the nn.LSTM
                  ):
         """
@@ -48,62 +48,62 @@ class FeatureExtractorNet(nn.Module):
         self.lstm_hidden_size = lstm_hidden_size
         self.lstm_num_layers = lstm_num_layers
 
-        # define the network which outputs the action_mean
+        # using mlp only (mlp=multilinear perceptron = feed-forward neural network = FFN)
         if net_arch == "mlp_separate" or net_arch == "mlp_shared":
             print("(FE) net_arch = only mlp (shared or separate)")
             # mlp_separate: base net_arch according to paper implementation, NO shared layers between actor and critic
             # mlp_shared: base net_arch but with shared layers
-                # vanilla net_arch with 2 dense layers, each 64 hidden size (neurons), each with a tanh activation
-                # and both layers shared between actor and critic. Actor and critic then only
-                # have one separate layer each, that is, for the output (actions for actor, value for critic)
-                # this is the base case net architecture because it is the same as used in stable baselines
-                # as a default and then it is easier to compare if my own ppo implementation is correct or not
-                # (performance should be "kind of" in line, although they are using things I did not implement,
-                # such as their own custom learning rate scheduling and probably other things I might not have read about,
-                # because they do not report all small implementation details which might have an impact))
             self.feature_extractor = nn.Sequential(
-                nn.Linear(in_features=observations_size, out_features=hidden_size, bias=True),
+                nn.Linear(in_features=self.observations_size, out_features=self.hidden_size, bias=True),
                 nn.Tanh(),
                 #nn.Softmax(),
-                #nn.ReLU(), # relu and softmax here didn't work well; made both layers have 0 gradient more often
-                nn.Linear(in_features=hidden_size, out_features=mid_features_size, bias=True),
+                #nn.ReLU(), # relu and softmax here didn't work well
+                nn.Linear(in_features=self.hidden_size, out_features=self.mid_features_size, bias=True),
                 nn.Tanh(),
             )
 
-        elif net_arch == "mlplstm_separate" or net_arch == "mlplstm_shared": # using mlp as before and adding an lstm for additional lags extraction.
+        # using mlp + lstm
+        elif net_arch == "mlplstm_separate" or net_arch == "mlplstm_shared":
             print("(FE) net_arch = mlp + lstm")
             # again, no shared layers between actor and critic
             self.feature_extractor_mlp = nn.Sequential(
-                nn.Linear(in_features=observations_size, out_features=hidden_size, bias=True),
+                nn.Linear(in_features=self.observations_size, out_features=self.hidden_size, bias=True),
                 nn.Tanh(),
-                nn.Linear(in_features=hidden_size, out_features=mid_features_size, bias=True),
+                nn.Linear(in_features=self.hidden_size, out_features=self.mid_features_size, bias=True),
                 nn.Tanh(),
             )
             # add LSTM module
             # lstm in pytorch: https://pytorch.org/docs/stable/generated/torch.nn.LSTM.html
             # see also tutorial: https://pytorch.org/tutorials/beginner/nlp/sequence_models_tutorial.html
             # input_size = number of features, hidden_size = number of features in hidden state h, num_layers = number of LSTM layers (stacked LSTM if >1)
-            # biase = True, by default, batch_first = True (False by default);
+            # bias = True, by default, batch_first = True (False by default);
             # means that input is provided as (batch_size, sequence_length, n_features(=input_size)
             #note: here is the source code of nn.LSTM (pytorch) https://pytorch.org/docs/stable/_modules/torch/nn/modules/rnn.html#LSTM
             # for understanding how the forward method works on this nn.Module
-            self.feature_extractor_lstm = nn.LSTM(input_size=lstm_observations_size, hidden_size=lstm_hidden_size,
-                                                         num_layers=lstm_num_layers, batch_first=True, bias=True)
+            self.feature_extractor_lstm = nn.LSTM(input_size=self.lstm_observations_size, hidden_size=self.lstm_hidden_size,
+                                                         num_layers=self.lstm_num_layers, batch_first=True, bias=True)
             # use a summary layer to bring down the feature space to 64 (since now we have two outputs),
             # so that the output can be then directly used in the actor resp. critic network. Using Tanh activation
             self.summary_layer = nn.Sequential(
-                nn.Linear(in_features=mid_features_size+lstm_hidden_size, out_features=mid_features_size),
+                nn.Linear(in_features=self.mid_features_size+lstm_hidden_size, out_features=self.mid_features_size),
                 nn.Tanh()
             )
         else:
             print("(FE) Error, no valid net_arch specified.")
 
     def create_initial_lstm_state(self, sequence_length=1):
-        # initialize zero hidden states i the beginning
+        """
+        Function to create the initial lstm state, for the initial state. It is a tuple of (h_0, c_0)
+        (h=hidden sttae, c=cell state) with vector of zeroes, for 1 timestep.
+        @param sequence_length:
+        @return:
+        """
+        # initialize zero hidden states in the beginning
         # see: https://discuss.pytorch.org/t/initialization-of-first-hidden-state-in-lstm-and-truncated-bptt/58384
         # shape of hidden state h / cell state c is each: (num_layers, number_timesteps, hidden_size)
-        # e.g. if we have 2 layers (default), a batch of 5 timesteps and hidden_size=64 (default) => shape= (2, 5, 64)
-        # when we do a forward pass or predict on one sample (day) only, we have (2,1,64)
+        # e.g. if we have 2 layers (default), a batch of 5 timesteps and hidden_size=64 (default) => shape= (2, 5, 32)
+        # when we do a forward pass or predict on one sample (day) only, we have (2,1,32);
+        # the latter is always the case for when we initialize the lstm state
         initial_lstm_states = (torch.zeros(self.lstm_num_layers, sequence_length, self.lstm_hidden_size),
                                torch.zeros(self.lstm_num_layers, sequence_length, self.lstm_hidden_size))
         return initial_lstm_states
@@ -159,7 +159,7 @@ class FeatureExtractorNet(nn.Module):
             #    print(mid_features_mlp_reshaped.shape)
             #    print(mid_features_mlp_reshaped)
             # reshape the features received from the lstm feature extractor
-            mid_features_lstm_reshaped = mid_features_lstm.reshape(len(observations),  self.mid_features_size)
+            mid_features_lstm_reshaped = mid_features_lstm.reshape(len(observations),  self.lstm_hidden_size)
             #if len(observations) ==64:
                 #print("mid_features lstm: ")
                 #print(mid_features_lstm.shape)
@@ -206,27 +206,30 @@ class ActorNet(nn.Module):
     hidden_size        : number of neurons in hidden layer if any
     """
     super(ActorNet, self).__init__()
+    self.actions_num = actions_num
+    self.mid_features_size = mid_features_size
+    self.env_step_version = env_step_version
+
     # define the network which outputs the action_mean
     if env_step_version == "paper":
         self.action_mean_net = nn.Sequential(
-            nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
-            #nn.Tanh(), # I first used the squashing function but git better results without it, for some reason
+            nn.Linear(in_features=self.mid_features_size, out_features=self.actions_num, bias=True),
+            #nn.Tanh(), # I first used the squashing function but got better results without it, for some reason
             )
         # add log stdev as a parameter, initializes as 0 by default
         # Note: this is because log(std) = 0 means that std = 1, since log(1)=0
         # note: sometimes problems that stdev EXPLODES; based on a reddit post (https://www.reddit.com/r/reinforcementlearning/comments/fdzbs9/ppo_entropy_and_gaussian_standard_deviation/)
         # i found a workaround in the openai spinning up implementation: https://github.com/openai/spinningup/blob/master/spinup/algos/pytorch/ppo/core.py#L84
-        log_stdev = -0.5 * np.ones(actions_num, dtype=np.float32)
+        log_stdev = -0.5 * np.ones(self.actions_num, dtype=np.float32)
         self.log_stdev = torch.nn.Parameter(data=torch.as_tensor(log_stdev), requires_grad=True)
     # in case we are using the "newNoShort" version of the step_version (see documentation),
     # we have to add a softmax layer at the end (because we want to get actions = target portfolio weights)
     if env_step_version == "newNoShort" or env_step_version == "newNoShort2":
         self.action_mean_net = nn.Sequential(
-          nn.Linear(in_features=mid_features_size, out_features=actions_num, bias=True),
-          #nn.Softmax(),
+          nn.Linear(in_features=self.mid_features_size, out_features=self.actions_num, bias=True),
       )
-    #Note: the output in this case is interpreted as vector of dirichlet alphas (one entry for each asset)
-      # we will later take the log of them so they are non-negative and then use them in the Dirichlet dirtribution
+        # Note: the output in this case is interpreted as vector of dirichlet alphas (one entry for each asset)
+        # we will later take the log of them so they are non-negative and then use them in the Dirichlet dirtribution
 
   def forward(self, mid_features):
     """
@@ -247,13 +250,16 @@ class CriticNet(nn.Module):
   def __init__(self,
                mid_features_size: int=64,
                hidden_size: int=64,
-               net_arch: str="mlp_separate"):
+               net_arch: str=""):
     """
     mid_features_size  : size of the observation space, input dimension
     hidden_size        : number of neurons
     OUTPUT             : one value estimate per state, hence output dimension = 1
     """
     super(CriticNet, self).__init__()
+    self.mid_features_size = mid_features_size
+    self.hidden_size = hidden_size
+    self.net_arch = net_arch
     # tried out multiple architectures but went for the current one because it is the one from the PPO paper and
     # also the one from the ensemble paper, so easier to compare performances
     self.value_net = nn.Sequential(#nn.Linear(mid_features_size, hidden_size, bias=True),
@@ -261,7 +267,7 @@ class CriticNet(nn.Module):
                                   #nn.Linear(mid_features_size, hidden_size, bias=True),
                                   #nn.ReLU(),
                                   #nn.Tanh()
-                                  nn.Linear(in_features=mid_features_size, out_features=1, bias=True),
+                                  nn.Linear(in_features=self.mid_features_size, out_features=1, bias=True),
                                   #nn.Linear(hidden_size, 1, bias=True),
                                   )
 
@@ -294,7 +300,7 @@ def init_weights_feature_extractor_net(module, gain=np.sqrt(2)):
         if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
             module.bias.data.fill_(0.0)
-    #if isinstance(module, nn.LSTM):
+    #if isinstance(module, nn.LSTM): # didn't work, but weights are initialized uniformly by pytorch anyway
     #    nn.init.xavier_normal_(module.weight, gain=gain)
     #    if module.bias is not None:
             # fill bias with 0 (if there is a bias, which there always is in my work)
@@ -331,39 +337,21 @@ class BrainActorCritic(nn.Module):
                  hidden_size_features_extractor: int = 64,
                  # for lstm, only actually used if verison = mlplstm
                  lstm_observations_size: int = None,
-                 lstm_hidden_size_feature_extractor: int = 64,
+                 lstm_hidden_size_feature_extractor: int = 32,
                  lstm_num_layers: int = 2, #default is 2 because that worked well
                  # optimizer
                  optimizer: torch.optim = torch.optim.Adam,
                  learning_rate: float = 0.00025,
                  # net_archs
-                 net_arch: str = "mlp_separate",
+                 net_arch: str = "",
                  # step version in env
-                 env_step_version: str = "paper",
+                 env_step_version: str = "",
                  ):
         """
-
-        @param observations_size:
-        @param actions_num:
-        @param feature_extractor_class:
-        @param actor_class:
-        @param critic_class:
-        @param init_weights_feature_extractor_net:
-        @param init_weights_actor_net:
-        @param init_weights_critic_net:
-        @param mid_features_size:
-        @param hidden_size_actor:
-        @param hidden_size_critic:
-        @param hidden_size_features_extractor:
-        @param lstm_observations_size:
-        @param lstm_hidden_size_feature_extractor:
-        @param lstm_num_layers:
-        @param optimizer:
-        @param learning_rate:
-        @param net_arch:
-        @param env_step_version:
+        This is the Model which combines the feature extractor, actor (policy network) and critic (value network) part.
         """
         super(BrainActorCritic, self).__init__()
+
         # initialize class variables (only those needed in other functions)
         self.net_arch = net_arch
         self.env_step_version = env_step_version
@@ -466,16 +454,7 @@ class BrainActorCritic(nn.Module):
                 lstm_states_critic: Tuple=None,
                 ):
         """
-
-        @param observations:
-        @param evaluation_mode:
-        @param actions:
-        @param actions_deterministic:
-        @param lstm_observations:
-        @param lstm_states:
-        @param lstm_states_actor:
-        @param lstm_states_critic:
-        @return:
+        This function implements the forward pass.
         """
         if self.net_arch == "mlp_shared" or self.net_arch == "mlplstm_shared": # shared feature extactor between actor and critic
             ### FEATURES EXTRACTION
@@ -537,10 +516,6 @@ class BrainActorCritic(nn.Module):
             concentrations = action_means.exp() # we interpret the output of the actor (named action means)
                                                 # as log alpha vector (=Dirichlet concentrations), and we transform from [-inf, inf] interval
                                                 # to a [0, inf] interval
-            #print("log alphas: ")
-            #print(action_means)
-            #print("conc:")
-            #print(concentrations)
             actions_distribution = Dirichlet(concentration=concentrations)
             # now the action means are the mean of the dirichlet distribution
             action_means = actions_distribution.mean
@@ -555,8 +530,6 @@ class BrainActorCritic(nn.Module):
             # on the actions we feed the agent. Before the first backward pass, the actions distribution and probability are still the same.
             # after the first backward pass, they change.
             actions_joint_log_proba, actions_distr_entropy = self.evaluate_actions(actions, actions_distribution)
-            #print("actions_joint_log_proba")
-            #print(actions_joint_log_proba)
             return value_estimate, actions_joint_log_proba, actions_distr_entropy, action_means, actions_distribution, stdev
 
         #### FORWARD PASS / PREDICT
@@ -623,7 +596,7 @@ class BrainActorCritic(nn.Module):
             print("(BRAIN) Error, no valid env_step_version specified.")
         # Note: our log_stdev is initialized as a vector of -0.5's.
         # but if we take the exp(-0.5), it returns a vector of 0.6065 (the standard deviations).
-        #If we would initialize it like the base net_arch, as a vector of zeroes, then the std would be exp(0) = 1.
+        # If we would initialize it like the base net_arch, as a vector of zeroes, then the std would be exp(0) = 1.
         # entropy of a Normal distribution with std 1 =~1.4189
         # https://math.stackexchange.com/questions/1804805/how-is-the-entropy-of-the-normal-distribution-derived/1804829
         # so this will be the first entropy value we will get before any backpropagation

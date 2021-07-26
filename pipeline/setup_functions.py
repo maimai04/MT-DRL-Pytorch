@@ -16,27 +16,27 @@ def load_dataset(*,
                  ) -> pd.DataFrame:
     """
     Load the .csv dataset from the provided file path.
-    If a col_subset is specified, only the specified columns subset of the loaded dataset is returned.
-    (This can be used if there are many columns and we only want to use 5 of them e.g.)
 
-    @param col_subset:
-    @param date_subset_startdate:
-    @param date_subset:
-    @type file_path: object
-    @param file_path as specified in config.py
-    @return: (df) pandas dataframe
+    INPUT: path to df as csv, ordered by ticker, then date
+    OUTPUT: df as pd.DataFrame(), ordered by ticker, then date
+
+    @param file_path: the path to the preprocessed data
+    @param col_subset: the columns we want to use as feature in this run
+    @param date_subset: the name of the date column
+    @param date_subset_startdate: the date from which on we want to import the dataset
+    @param asset_name_column: name of the asset name column, where tickers are stored
+    @return:
 
     # Note: the asterisk (*) enforces that all the following variables have to be specified as keyword argument, when being called
     # see also: https://treyhunner.com/2018/10/asterisks-in-python-what-they-are-and-how-to-use-them/
-
-    INPUT: df as csv, ordered by ticker, then date
-    OUTPUT: df as pd.DataFrame(), ordered by ticker, then date
     """
+    # import df
     df = pd.read_csv(file_path, index_col=0)
-
+    # if we have specified the name of the date column and  provided a startdate,
+    # we get the df subset based on these params
     if date_subset and date_subset_startdate is not None:
         df = df[df[date_subset] >= date_subset_startdate]
-
+    # if we have specified a list of column names (features), we subset them
     if col_subset is not None:
         subcols = [date_subset, asset_name_column] + col_subset
         df = df[subcols]
@@ -59,15 +59,27 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
                 predict_deterministic: bool=False
                 ) -> list:
     """
-    Functin to create directories at the beginning of each run, based on paths specified in the config.py file,
-    used in the run.py file.
 
-    @param mode: run_dir - creates a directory for results and trained models of whole run (all seeds).
-        seed_dir - created a directory (within the directory for results resp. trained models) for each seed.
-    @param results_dir: name of results directory.
-    @param trained_dir: name of trained models directory.
-    @return:
+    @param mode: "run_dir" if we are creating directories for the whole run,
+                 "seed_dir" if we are creating directories for the run for a specific seed (which is a sub-run of the whole run)
+    @param results_dir: path to where the results directory should be created
+    @param trained_dir: path to where the directory for storing trained models should be created
+    @param results_path: name of the overall results folder where all results for all runs should be stored
+    @param trained_models_path: name of the overall trained models folder folder where all trained models for all runs should be stored
+
+    The below variables are only used to create the foldername for the run, they are set in the config.py file
+    @param now: date and time of the current run, automatically created in config.py
+    @param strategy_mode: ---
+    @param features_mode: used fo
+    @param reward_measure:
+    @param net_arch:
+    @param env_step_version:
+    @param run_mode:
+    @param seed:
+    @param subdir_names:
+    @param predict_deterministic:
     """
+    # for the whole run
     if mode == "run_dir":
         ### RESULTY DIRECTORY
         # creating results directory for the current run folders (one run/folder for each seed in this directory)
@@ -94,6 +106,7 @@ def create_dirs(mode: str = "run_dir", # "seed_dir"
         os.makedirs(trained_dir)
         return [results_dir, trained_dir]
 
+    # for one seed (seed-run) within a whole run
     if mode == "seed_dir":
         ### RESULTS SUBDIRECTORY
         # creating results sub-directory, one for each seed (for which the algorithm is run) within one run
@@ -146,13 +159,6 @@ def config_logging_to_txt(results_subdir,
                           results_path,
                           subdir_names,
                           preprocessed_data_file,
-                          now_hptuning,
-                          only_hptuning,
-                          gamma_list,
-                          gae_lam_list,
-                          clip_list,
-                          critic_loss_coef_hpt,
-                          entropy_loss_coef_hpt,
                           net_arch,
                           batch_size,
                           num_epochs,
@@ -165,16 +171,14 @@ def config_logging_to_txt(results_subdir,
                           entropy_loss_coef,
                           max_gradient_norm,
                           total_episodes_to_train_base,
-                          total_episodes_to_train_cont,
                           predict_deterministic,
                           ) -> None:
     """
     Writes all configurations and related parameters into the config_log.txt file.
+    This is done for each run, so that every run can be uniquely identified based
+    on its configurations.
 
-    @param results_subdir: the directory where the results for the current run are saved
-    @param trained_subdir: the directory where the model of the current run is saved
-    @param logsave_path: where the hereby created logging file is saved
-    @return: None
+    The parameters are all the parameters from the config.py file, hence they are not explained again.
     """
     txtfile_path = os.path.join(logsave_path, "configurations.txt")
 
@@ -227,68 +231,31 @@ def config_logging_to_txt(results_subdir,
                         f"PREPROCESSED_DATA_FILE   : {preprocessed_data_file}\n"
                         f"RESULTS_DIR              : {results_subdir}\n"
                         f"TRAINED_MODEL_DIR        : {trained_subdir}\n"
-                        #"------------------------------------\n"
-                        #f"HYPERPARAMETER TUNING\n"
-                        #"------------------------------------\n"
-                        #f"now_hptuning              : {now_hptuning}\n"
-                        #f"only_hptuning             : {only_hptuning}\n"
-                        #f"--parameters to tune--\n"
-                        #f"GAMMA_LIST                : {gamma_list}\n"
-                        #f"GAE_LAMBDA_LIST           : {gae_lam_list}\n"
-                        #f"CLIP_EPSILON_LIST         : {clip_list}\n"
-                        #f"CRITIC_LOSS_COEF_LIST     : {critic_loss_coef_hpt}\n"
-                        #f"ENTROPY_LOSS_COEF_LIST    : {entropy_loss_coef_hpt}\n"
+                        "------------------------------------\n"
+                        f"PPO AGENT PARAMETERS\n"
+                        "------------------------------------\n"
+                        f"NET_VERSION                   : {net_arch}\n"
+                        f"BATCH_SIZE                    : {batch_size}\n"
+                        f"NUM_EPOCHS                    : {num_epochs}\n"
+                        f"OPTIMIZER                     : {optimizer}\n"
+                        f"OPTIMIZER_LEARNING_RATE       : {optimizer_lr}\n"
+                        f"GAMMA                         : {gamma}\n"
+                        f"GAE_LAMBDA                    : {gae_lam}\n"
+                        f"CLIP_EPSILON                  : {clip_epsilon}\n"
+                        f"CRITIC_LOSS_COEF              : {critic_loss_coef}\n"
+                        f"ENTROPY_LOSS_COEF             : {entropy_loss_coef}\n"
+                        f"MAX_GRADIENT_NORMALIZATION    : {max_gradient_norm}\n"
+                        f"TOTAL_TIMESTEPS_TO_COLLECT (Cont)    : {total_episodes_to_train_base}\n"
+                        f"PREDICT_DETERMINISTIC         : {predict_deterministic}\n"
                         )
-
-    if settings.STRATEGY_MODE == "ppoCustomBase":
-        with open(txtfile_path, "a") as text_file:
-            text_file.write(f"NET_VERSION                   : {net_arch}\n"
-                            f"BATCH_SIZE                    : {batch_size}\n"
-                            f"NUM_EPOCHS                    : {num_epochs}\n"
-                            f"OPTIMIZER                     : {optimizer}\n"
-                            f"OPTIMIZER_LEARNING_RATE       : {optimizer_lr}\n"
-                            f"GAMMA                         : {gamma}\n"
-                            f"GAE_LAMBDA                    : {gae_lam}\n"
-                            f"CLIP_EPSILON                  : {clip_epsilon}\n"
-                            f"CRITIC_LOSS_COEF              : {critic_loss_coef}\n"
-                            f"ENTROPY_LOSS_COEF             : {entropy_loss_coef}\n"
-                            f"MAX_GRADIENT_NORMALIZATION    : {max_gradient_norm}\n"
-                            f"TOTAL_TIMESTEPS_TO_COLLECT (Base)    : {total_episodes_to_train_base}\n"
-                            f"TOTAL_TIMESTEPS_TO_COLLECT (Cont)    : {total_episodes_to_train_cont}\n"
-                            f"PREDICT_DETERMINISTIC         : {predict_deterministic}\n"
-                            )
-    elif settings.STRATEGY_MODE == "ppo": # todo: rm
-        with open(txtfile_path, "a") as text_file:
-            text_file.write(f"POLICY             : {agent_params.ppo.POLICY}\n"
-                            f"ENT_COEF           : {agent_params.ppo.ENT_COEF}\n"
-                            f"GAMMA              : {agent_params.ppo.GAMMA}\n"
-                            f"LEARNING_RATE      : {agent_params.ppo.LEARNING_RATE}\n"
-                            f"N_STEPS (buffer)   : {agent_params.ppo.N_STEPS}\n"
-                            f"BATCH_SIZE         : Optional[int] = 64\n"
-                            f"N_EPOCHS           : {agent_params.ppo.N_EPOCHS}\n"
-                            f"GAE_LAMBDA         : {agent_params.ppo.GAE_LAMBDA}\n"
-                            f"CLIP_RANGE         : {agent_params.ppo.CLIP_RANGE}\n"
-                            f"VF_COEF            : {agent_params.ppo.VF_COEF}\n"
-                            f"default parameters (unchanged from default as given by stable-baselines):"
-                            f"MAX_GRAD_NORM      : {agent_params.ppo.MAX_GRAD_NORM}\n"
-                            f"CLIP_RANGE_VF      : {agent_params.ppo.CLIP_RANGE_VF}\n"
-                            f"USE_SDE            : {agent_params.ppo.USE_SDE}\n"
-                            f"SDE_SAMPLE_FREQ    : {agent_params.ppo.SDE_SAMPLE_FREQ}\n"
-                            f"TARGET_KL          : {agent_params.ppo.TARGET_KL}\n"
-                            f"TENSORBOARD_LOG    : {agent_params.ppo.TENSORBOARD_LOG}\n"
-                            f"CREATE_EVAL_ENV    : {agent_params.ppo.CREATE_EVAL_ENV}\n"
-                            f"POLICY_KWARGS      : {agent_params.ppo.POLICY_KWARGS}\n"
-                            f"VERBOSE            : {agent_params.ppo.VERBOSE}\n"
-                            f"DEVICE             : {agent_params.ppo.DEVICE}\n"
-                            f"INIT_SETUP_MODEL   : {agent_params.ppo.INIT_SETUP_MODEL}\n"
-                            f"TRAINING_TIMESTEPS : {agent_params.ppo.TRAINING_TIMESTEPS}\n")
     return None
 
 def custom_logger(seed: int,
                   logging_path: str,
                   level: logging = logging.NOTSET):
     """
-    Method to return a custom logger with the given name and level
+    Method to return a custom logger with the given name and level.
+    Used for logging to log files during the run, for each seed, all saved in _LOGGINGS.
     """
     logger_name = f"run_log_seed_{seed}"
     filename = os.path.join(logging_path, logger_name+".txt")
@@ -302,20 +269,19 @@ def custom_logger(seed: int,
     logger.addHandler(file_handler)
     return logger
 
-def get_data_params(final_df: pd.DataFrame,
-                    feature_cols: list = [],
-                    single_feature_cols: list = [],
-                    lstm_cols: list = [],
-                    asset_name_column="tic",
+def get_data_params(final_df: pd.DataFrame, # imported at the beginning of each run
+                    feature_cols: list = [], # defined in config
+                    single_feature_cols: list = [],# defined in config
+                    lstm_cols: list = [], # defined in config
+                    asset_name_column="tic", # defined in config but also default
                     ):
     """
     Get some parameters we need, based on the final pre-processed dataset:
         number of individual assets (n_individual_assets)
         number of features used (n_features)
-        unique trade dates within the wished validation (or other) subset (unique_trade_dates)
-    @param final_df:
-    @param asset_name_column:
-    @return:
+        number of single features (n_single_features), here only VIX
+        number of LSTM features (n_features_lstm)
+        number of single LSTM fetaures (n_single_features_lstm), here only VIX
     """
     df = final_df.copy()
     n_individual_assets = len(df[asset_name_column].unique())
