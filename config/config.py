@@ -3,7 +3,14 @@ import os
 import torch
 
 """
-defining classes for grouping parameters.
+This config file defines parameters which are used for running the code.
+The parameters are grouped into classes.
+
+Note: 
+- parameters after ---------------SET MANUALLY--------------- can be changed
+- parameters after ---------------DEFAULT--------------- can be changed but are considered default parameters
+- parameters after ---------------LEAVE--------------- are created automatically and should not be changed
+
 
 classes:
 --------
@@ -17,32 +24,24 @@ class settings:
     Defining general settings for the whole run and global variables.
     """
     # ---------------SET MANUALLY---------------
-    # dataset used:
-    DATASET = "US_stocks_WDB_full" #"done_data"
-    #DATASET = "JP_stocks_WDB" # todo: rm
 
+    #  ---------------DEFAULT---------------
+    # dataset used:
+    DATASET = "US_stocks_WDB_full"
     ### strategy mode to be run
-    #STRATEGY_MODE = "ppo" # todo: rm
     STRATEGY_MODE = "ppoCustomBase"
 
     REWARD_MEASURE = "addPFVal" # additional portfolio value, = change in portfolio value as a reward
     #REWARD_MEASURE = "logU" # log utility of new / old value, in oder to "smooth out" larger rewards
-    #REWARD_MEASURE = "SR7" # sharpe ratio, over 7 days # subtracting a volatility measure # todo: rm
-    #REWARD_MEASURE = "semvarPenalty"
+    #REWARD_MEASURE = "semvarPenalty" # log utility with semivariance penalty
 
-    #RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
-    RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
+    RETRAIN_DATA = False # = saving trained agent after each run and continue training only on the next train data chunk, using pre-trained agent (faster)
+    #RETRAIN_DATA = True # = when training again on the whole training dataset for each episode
 
     ### Set dates
     # train
     STARTDATE_TRAIN = 20090101 #20141001 #20090102  # Note: this is also the "global startdate"
     ENDDATE_TRAIN = 20151001
-    # validation (only needed for get_data_params in preprocessing)
-    #STARTDATE_VALIDATION = 20160101 #20151001
-    #ENDDATE_VALIDATION = #20200707
-    # trading starts on:     # 2016/01/01 is the date that real trading starts
-    #STARTDATE_TRADE = 20160104
-    #ENDDATE_TRADE = None
     # backtesting
     STARTDATE_BACKTESTING_BULL = 20070605
     ENDDATE_BACKTESTING_BULL = 20070904 # there is no 2./3. sept
@@ -73,9 +72,10 @@ class settings:
 
 class data_settings:
     """
-    Define variables and settings for data preprocessing.
+    Define settings for datapreparation before the run, such as
+    reading out the number of assets in a data set and the feature columns..
     """
-    # ---------------SET MANUALLY---------------
+    #  ---------------DEFAULT---------------
     # DATA SOURCE AND DATA SET CODE
     DATABASE = "WDB"  # stands for Wharton Data Base
     COUNTRY = "US"
@@ -112,8 +112,12 @@ class data_settings:
     # only applied if lstm net arch chosen
     LSTM_FEATURES = RETURNS_FEATURES + RISK_INDICATORS + SINGLE_FEATURES
 
+
+    # ---------------SET MANUALLY---------------
     # CHOOSE FEATURES MODE, BASED ON WHICH THE FEATURES LIST IS CREATED (SEE BELOW)
-    FEATURES_MODE = "fm3"
+    FEATURES_MODE = "fm2"
+    #FEATURES_MODE = "fm3"
+    #FEATURES_MODE = "fm7" # for lstm
 
     # ---------------LEAVE---------------
     if FEATURES_MODE == "fm1":
@@ -149,119 +153,94 @@ class data_settings:
         print("error (config): features list not found, cannot assign features mode.")
 
 class env_params:
-    STEP_VERSION = "paper" # paperTanh
+    """
+    Parameters used within the environment:
+
+    STEP_VERSION    : indicates the way the actions are exercised in the env when the agent takes a step in the env.
+                      This is depending on whether we have actions from a Gaussian distribution, which are "number of assets to buy"
+                      or from a Dirichlet distribution, which are target weights.
+                      "paper": the version of the paper for gaussian policy is used, where action = number of assets to buy, no short-selling either
+                      "newNoShort": the version with the Dirichlet distribution, no short-selling
+                      "newNoShort2: version whith Dirichlet where the cash weight is also estimated by the policy network
+    """
+    # ---------------SET MANUALLY---------------
+    STEP_VERSION = "paper"
     #STEP_VERSION = "newNoShort"
     #STEP_VERSION = "newNoShort2"
 
-    # ---------------LEAVE---------------
+    # ---------------DEFAULT---------------
     if STEP_VERSION == "newNoShort" or STEP_VERSION == "newNoShort2":
-        HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock
-        REWARD_SCALING = 1e-4  # This is 0.0001.
-        REBALANCE_PENALTY = 0#0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
-    elif STEP_VERSION == "paper" or "paperTanh":
-        HMAX_NORMALIZE = 100  # This is the max. number of stocks one is allowed to buy of each stock
-        REWARD_SCALING = 1e-4  # This is 0.0001.
-        REBALANCE_PENALTY = None
+        HMAX_NORMALIZE = None  # This is the max. number of stocks one is allowed to buy of each stock. It is none here since we don't
+                               # actually use this parameter in this version, so it could also be any number really
+        REWARD_SCALING = 1e-4  # This is 0.0001. It is the number the reward is multiplied with in order to make it smaller, as networks work better with numbers around 0
+                               # instead with numbers in the thousands
+        REBALANCE_PENALTY = 0  #0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
+                               # todo: rm
+    elif STEP_VERSION == "paper":
+        HMAX_NORMALIZE = 100   # This is the max. number of stocks one is allowed to buy of each stock
+        REWARD_SCALING = 1e-4  # This is 0.0001. It is the number the reward is multiplied with in order to make it smaller, as networks work better with numbers around 0
+        REBALANCE_PENALTY = None # here not applicable, so None as fill-in value but could be anything
 
+    # starting cash value 1 mio.
     INITIAL_CASH_BALANCE = 1000000
+    # transaction fee applied to trading volume
     TRANSACTION_FEE_PERCENT = 0.001  # reasonability: https://www.google.com/search?client=firefox-b-d&q=transaction+fee+for+stock+trading
 
 class agent_params:
-    # ---------------SET MANUALLY---------------
-    class ppo: # from stable baselines # todo: rm
-        ##### FEATURE EXTRACTOR & POLICY & VALUE NETWORKS
-        # multiple linear perceptrons
-        POLICY = 'MlpPolicy' # CustomMlp # CustomLSTM
-
-        ##### HYPERPARAMETERS THAT NEED TO BEE TUNED
-        # discount factor of returns: important because if high, future returns are discounted less and become more important
-        # if discount rate is low, the opposite
-        GAMMA = 0.99
-        # clipping range for the policy loss (actor);
-        # important because it ensures the new policy cannot be very different from the old one
-        # the smaller te clip range, the more conservative we are with our policy changes
-        CLIP_RANGE = 0.2
-        # coefficient of value function (critic)
-        # this is the weight the loss of the value network has in the whole network architecture
-        # this is only relevant if we have a common network (part) for both critic (value function) and actor (policy function),
-        # else the policy loss reduces to the policy loss only and the value loss is separate as well
-        VF_COEF = 0.5
-        # entropy coefficient for the loss calculation; how much we weight the entropy in the loss
-        # entropy is added to the combined loss to ensure some exploration, that we don't get too stuck in a local optimum
-        # if the entropy coefficient is too high, the agent might unlearn the things he learned to fast
-        # see also: https://www.reddit.com/r/reinforcementlearning/comments/i3i5qa/ppo_to_high_entropy_coefficient_makes_agent/
-        ENT_COEF = 0.005
-        # generalized advantage estimate smoothing factor, the larger, the smoother our estimates (less variance)
-        GAE_LAMBDA = 0.95
-
-        ### NOT TUNED
-        # BATCH_SIZE: Optional[int] = 64, # minibatch size for updating the network
-        # Number of epoch when optimizing the network loss(es)
-        N_EPOCHS = 10
-        # maximal radient normalization
-        MAX_GRAD_NORM = 0.5
-        # number of timesteps that are collected into the buffer every time experience is collected
-        # (there is not much to tune here because we have a limited data set anyways)
-        N_STEPS = 2048
-        # optimizer (neural network, by default: Adam) learning rate
-        LEARNING_RATE = 3e-4 # not tuned because Adam already has some sort of adaptive learning rate and therefore is somewhat robust
-
-        ### DEFAULT PARAMETERS / extended parameters, set to False / not tuned for this thesis
-        CLIP_RANGE_VF = None # clipping range for the value function: as much as the policy loss can be clipped, the value function
-        # can also be clipped; this is an extension not in the paper though
-        # sde = state independent exploration, Fals eby default
-        USE_SDE = False
-        SDE_SAMPLE_FREQ = -1
-        TARGET_KL = None
-        TENSORBOARD_LOG = None #"TB_LOG"
-        CREATE_EVAL_ENV = False
-        POLICY_KWARGS = None
-        VERBOSE = 0
-        DEVICE = "auto"
-        INIT_SETUP_MODEL = True
-
-        ### HYPERPARAMETERS FOR PPO TRAINING
-        # this is the number of total steps to be taken during training. The higher the number, the more often we are
-        # going to sample new batches of data and train on them. Doing this too often might lead to "overtraining",
-        # especially since we have a "fixed" stock market dataset. Doing too few steps might lead to te agent to
-        # not learn enough. Since we are working with a rolling / expanding training window, it would make sense to make
-        # the training time steps adaptive.
-        TRAINING_TIMESTEPS = 10000 #100000
-
+    """
+    Here, the (hyper-)parameters for the PPO agent / algorithm are defined.
+    Initially, there were two ppo versions, that is why there is a class in a class here.
+    """
     class ppoCustomBase:
         """
-        This class implements my own custom implementation of the PPO algorithm
+        Here, the hyper-parameters for the custom ppo agent are defined.
         """
+        # ---------------SET MANUALLY---------------
         ### SETUP PARAMETERS
         # net architecture mode
-        #NET_ARCH = "mlp_separate" # todo: rm
+
+        #NET_ARCH = "mlp_separate" #
         #NET_ARCH = "mlplstm_separate" # todo: rm
 
-        #NET_ARCH = "mlp_shared"
-        NET_ARCH = "mlplstm_shared"
+        NET_ARCH = "mlp_shared" # only feed-forward network, with fully shared layers between actor and critic
+        #NET_ARCH = "mlplstm_shared" # feed-forward network + lstm, with fully shared layers between actor and critic
 
+        # ---------------DEFAULT---------------
         ### HYPERPARAMETERS
-        BATCH_SIZE = 64
-        NUM_EPOCHS = 10
-        OPTIMIZER = torch.optim.Adam
-        OPTIMIZER_LEARNING_RATE = 0.00025 #0.001
-        GAMMA = 0.99
-        GAE_LAMBDA = 0.95
-        CLIP_EPSILON = 0.2 #0.5#0.2
-        CRITIC_LOSS_COEF = 0.5
-        ENTROPY_LOSS_COEF = 0.005 #0.0001 #0.005 #0.01 #0.01
+        BATCH_SIZE = 64 # = minibatch size, for mini-batch updates during training
+        NUM_EPOCHS = 10 # how many times the policy is updated on the whole same batch of data (not minibatch, ut whole batch)
+        OPTIMIZER = torch.optim.Adam # optimizer for gradient descent
+        OPTIMIZER_LEARNING_RATE = 0.00025 #learning rate for optimizer
+        GAMMA = 0.99 # discount factor for rewards
+        GAE_LAMBDA = 0.95 # smoothing factor for GAE (generalized advantage estimator) calculation
+        CLIP_EPSILON = 0.2 # clip rate for surrogate objective
+        CRITIC_LOSS_COEF = 0.5 # how much weight the value loss has in the combined loss
+
+        # setting the entropy coefficient: how much do we value exploration in the combined loss function
+        if env_params.STEP_VERSION == "newNoShort" or env_params.STEP_VERSION == "newNoShort2":
+            # for version with Dirichlet distribution, higher entropy is better,
+            ENTROPY_LOSS_COEF = 1000 #0.0001 #0.005 #0.01 #0.01
+        elif env_params.STEP_VERSION == "paper":
+            # for version with Gaussian distribution, lower entropy works better, because the standard deviation already
+            # gets large easily
+            ENTROPY_LOSS_COEF = 0.0001#0.005 #0.0001 #0.005 #0.01 #0.01
+
+        # see: https://arxiv.org/abs/1711.02257
+        # gradient normalization normalizes the gradient over all gradients together
         MAX_GRADIENT_NORMALIZATION = 0.5
-        MAX_KL_VALUE = None # not implemented
 
         ### LEARNING PARAMETERS
-        TOTAL_TIMESTEPS_TO_COLLECT = 5000 # normally set = length of train / validation / test data = > length of one episode
-        #TOTAL_TIMESTEPS_TO_TRAIN = 10000 #100000 # if > len(data), we will learn on the same data multiple times (but every time with different actions)
-        TOTAL_EPISODES_TO_TRAIN_BASE = 50#60 #10 # for initial training, later a little bit less if retrain==True)
-        TOTAL_EPISODES_TO_TRAIN_CNT = 40#TOTAL_EPISODES_TO_TRAIN_BASE-10
+        TOTAL_EPISODES_TO_TRAIN_BASE = 50
+        #TOTAL_EPISODES_TO_TRAIN_CNT = 40#TOTAL_EPISODES_TO_TRAIN_BASE-10
 
+        # prediction is deterministic, actions are not sampled. This is explained in the thesis
         PREDICT_DETERMINISTIC = True
 
 class paths:
+    """
+    This class stores the data paths for the results folders.
+    This is all done automatically.
+    """
     # ---------------LEAVE---------------
     # data paths
     DATA_PATH = "data"
@@ -291,27 +270,4 @@ class paths:
                        "backtest_bear": "backtest_bear",
                        "training_performance": "training_performance",
                        }
-
-    # ---------------LEAVE---------------
     PREPROCESSED_DATA_FILE = os.path.join(PREPROCESSED_DATA_PATH, f"{settings.DATASET}.csv")
-
-class hptuning_config: # todo: rm
-    # if you want to tune hyperparameter before the run (takes many hours)
-    #now_hptuning = True
-    now_hptuning = False
-
-    # if you only want to tune hyperparameters for the current setting and not run the whole train / test setup as well
-    only_hptuning = False
-    #only_hptuning = True
-
-    # https://medium.com/aureliantactics/ppo-hyperparameters-and-ranges-6fc2d29bccbe
-    GAMMA_LIST = [0.8, 0.99]
-    GAE_LAMBDA_LIST = [0.95, 0.99]
-    CLIP_EPSILON_LIST = [0.1, 0.2, 0.3]  # 0.5#0.2
-    CRITIC_LOSS_COEF_LIST = [0.5, 1]
-    ENTROPY_LOSS_COEF_LIST = [0.001, 0.3]
-
-    # NOTE: I have created a grid in excel "manually" using these variables and the excel
-    # was saved as .csv file in the data folder.
-    # So if you want to try out other hyperparameters, you need to change the excel /csv file.
-

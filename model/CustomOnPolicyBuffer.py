@@ -18,7 +18,7 @@ class OnPolicyBuffer():
       - store trajectories and the corresponding metrics collected by the agent:
         observations, actions (from forward pass on actor/policy network),
         log probabilities of actions, rewards, dones,
-        value estimates (from forward pass on critic/value estinator network),
+        value estimates (from forward pass on critic/value estimator network),
         calculated rewards-to-go,
         calculated advantage estimates
       - converts stored lists /arrays to tensorflow tensors
@@ -30,9 +30,11 @@ class OnPolicyBuffer():
                  obs_shape, # must be tuple (observations,)
                  actions_number: int,
                  lstm_obs_shape=None,
+                 lstm_hidden_size: int=32
                  ):
         self.buffer_size = buffer_size  # buffer size ALWAYS = length of the data set here
         self.obs_shape = obs_shape  # Tuple[int, int]
+        self.lstm_hidden_size = lstm_hidden_size
         if lstm_obs_shape == None:
             self.lstm_obs_shape = obs_shape
         else:
@@ -46,13 +48,13 @@ class OnPolicyBuffer():
         self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
         # hidden states / lstm states to be saved
         # about the shapes: the array needs to be of length buffer_size, then it needs to be able to store
-        # arrays of shape (2,1,64) = 2 arrays of shape 1*64
-        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        # arrays of shape (2,1,32) = 2 arrays of shape 1*32 (with 32 being the lstm hidden size)
+        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
         # actions come in as tensor (estimation of actor) per step
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
@@ -189,6 +191,8 @@ class OnPolicyBuffer():
             self.trajectory_dict["advantage_estimates"][t] = next_advantage_value
 
     def calculate_and_store_returns(self):
+        # returns are calculated using the advantage estimates + our value estimate in order to get less noisy estimates of the returns than
+        # if we would simply use the rewards.
         self.trajectory_dict["returns"] = self.trajectory_dict["advantage_estimates"] + self.trajectory_dict["value_estimates"]
 
     def reset(self):
@@ -202,12 +206,14 @@ class OnPolicyBuffer():
         # lstm observations (only observations which are input to the lstm, such as log returns and vix)
         self.lstm_obs = np.zeros((self.buffer_size,) + self.lstm_obs_shape, dtype=np.float32)
         # hidden states / lstm states to be saved
-        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
-        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (64,), dtype=np.float32)
+        # about the shapes: the array needs to be of length buffer_size, then it needs to be able to store
+        # arrays of shape (2,1,32) = 2 arrays of shape 1*32 (with 32 being the lstm hidden size)
+        self.lstm_state_h = np.zeros((self.buffer_size,) + (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_c = np.zeros((self.buffer_size,) + (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_actor_h = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_actor_c = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_critic_h = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
+        self.lstm_state_critic_c = np.zeros((self.buffer_size,)+ (2,1) + (self.lstm_hidden_size,), dtype=np.float32)
         # actions
         self.actions = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)
         self.actions_clipped = np.zeros((self.buffer_size, self.actions_number), dtype=np.float32)

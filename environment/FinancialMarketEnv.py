@@ -5,16 +5,15 @@ import numpy as np
 import pandas as pd
 from itertools import chain
 import gym
-import torch
 from gym import spaces
-from torch import nn
 
 
 class FinancialMarketEnv(gym.Env):
     """
-    This class implements the stock trading environment for thiw work. It suclasses the gym.Env class from
+    This class implements the stock trading environment. It subclasses the gym.Env class from
     OpenAI Gym. Note that this just means that the class meets some basic Gym standards, such that it has
     certain methods mandatory implemeted, namely: step, reset, render
+    lso, the action space from gym is used, namely from gym spaces
 
     Stable baselines has a guide of how to create a stock trading environment:
     A stock trading environment for OpenAI gym
@@ -24,8 +23,11 @@ class FinancialMarketEnv(gym.Env):
 
     This environment was initially inherited from:
     Yang et al. (2020): Deep Reinforcement Learning for Automated Stock Trading: An Ensemble Strategy
-
-    Everything was changed except from the way the
+    But has been changed greatly.
+    What has not been changed:
+    - the way they conduct the sell and buy action for their version (just fixed some mistakes, like that there are no fractional stocks anymore now)
+    - the way the termination is done at the end when the last date is reached and how the last state is passed to the environment;
+    this was just refactored and many things have been added but the basic idea remains the same and is from the paper above
     """
     metadata = {'render.modes': ['human']}
 
@@ -88,7 +90,6 @@ class FinancialMarketEnv(gym.Env):
                  steps_counter: int = 0,
                  # whether we want to save results or not (default True, but for debugging sometimes False)
                  save_results=True,
-                 calculate_sharpe_ratio=False,
                  logger=None,
                  # for special reward calculation based on sharpe ratio or semivariance penalty;
                  performance_calculation_window=7,
@@ -136,7 +137,6 @@ class FinancialMarketEnv(gym.Env):
         self.price_colname = price_colname
         self.results_dir = results_dir
         self.save_results = save_results
-        self.calculate_sharpe_ratio = calculate_sharpe_ratio
         self.performance_calculation_window = performance_calculation_window
         self.step_version = step_version
         self.rebalance_penalty = rebalance_penalty
@@ -189,7 +189,7 @@ class FinancialMarketEnv(gym.Env):
         # in my own version (newNoShort), I use the cash weights and the asset weights instead, since my outputted actions are also
         # interpreted as weights and hence I think this makes more sense (see documentation in written part of thesis)
         if self.step_version == "paper":
-            self.state = {"cash": [self.current_cash_weight],
+            self.state = {"cash": [self.current_cash_balance],
                           "n_asset_holdings": self.current_n_asset_holdings}
         elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
             self.state = {"cash_w": [self.current_cash_weight],
@@ -215,7 +215,12 @@ class FinancialMarketEnv(gym.Env):
             # if we are in the first iteration (=episode) and at the first step,
             # we add feature names with a suffix to th state header from before
             if self.iteration == 1 and self.steps_counter == 0:
-                if feature not in self.lstm_features_list:
+                # if we use an lstm, we want to split the features into mlp and lstm fetaures
+                if self.net_arch == "mlplstm_shared" or self.net_arch == "mlplstm_separate":
+                    if feature not in self.lstm_features_list:
+                        suffix = "_" + feature
+                        self.state_header += [s + suffix for s in self.asset_names]
+                else:
                     suffix = "_" + feature
                     self.state_header += [s + suffix for s in self.asset_names]
 
@@ -224,7 +229,10 @@ class FinancialMarketEnv(gym.Env):
             # we don't want them to appear n_asset times in the state
             self.state.update({feature: [self.data[feature].values[0]]})
             if self.iteration == 1 and self.steps_counter == 0:
-                if feature not in self.lstm_features_list:
+                if self.net_arch == "mlplstm_shared" or self.net_arch == "mlplstm_separate":
+                    if feature not in self.lstm_features_list:
+                        self.state_header += ["vixDiv100"]
+                else:
                     self.state_header += ["vixDiv100"]
 
         # create lstm state as a subset of the state
@@ -269,6 +277,9 @@ class FinancialMarketEnv(gym.Env):
         if self.iteration == 1 and self.steps_counter == 0:
             self.memories.update({"state_header": self.state_header})
 
+
+
+
     def step(self, actions) -> list:
         """
         This function is used for the agent to take a step in the environment and hence to make a
@@ -294,51 +305,6 @@ class FinancialMarketEnv(gym.Env):
         @param actions: np.array of actions, provided by the agent
         @return: self.state: np.array, self.reward: float, self.terminal_state: bool, {}
         """
-
-        def _get_sharpe_ratio(window="full") -> float:  # todo: rm
-            """
-            This function is used to calculate the sharpe ratio for the current episode either at the
-            end of the episode (for hyperparameter tuning) or at the end of each day if
-            reward measure = Sharpe ratio.
-            """
-            dates = pd.DataFrame({"datadate": self.memories["datadates"]})
-            pfval = pd.DataFrame(self.memories["portfolio_value"])
-            df = pd.concat([dates, pfval], axis=1)
-            df["datadate"] = pd.to_datetime(df["datadate"], format='%Y%m%d')
-            df.columns = ["datadate", "pfvalue"]
-            if window == "full":
-                pass
-            else:
-                print(f"sharpe ratio, window {window}")
-                df = df[-window:]
-            # then we can create a "perf" object (performances) with the function .calc_stats() (bt = backtest)
-            perf = df.set_index("datadate")["pfvalue"].calc_stats()
-            sharpe_ratio_daily_ann = perf.daily_sharpe
-            return sharpe_ratio_daily_ann
-
-        def _get_semivariance(window="full") -> float:
-            # calculated base on this formula: https://www.investopedia.com/terms/s/semivariance.asp
-            dates = pd.DataFrame({"datadate": self.memories["datadates"]})
-            pfval = pd.DataFrame(self.memories["portfolio_value"])
-            df = pd.concat([dates, pfval], axis=1)
-            df["datadate"] = pd.to_datetime(df["datadate"], format='%Y%m%d')
-            df.columns = ["datadate", "pfvalue"]
-            if window == "full":
-                pass
-            else:
-                # get df according to window
-                if self.steps_counter < self.performance_calculation_window - 1:
-                    print(f"semivariance, window {window}")
-                df = df[-window:]
-            # calculate the daily return for each day in the episode, while the first will naturally be Nan and we remove it
-            daily_ret = df["pfvalue"].pct_change(1)[1:]
-            # calculate the mean of all returns
-            mean = np.mean(daily_ret)
-            # get the daily returns which are below the mean of returns
-            daily_ret_below_mean = daily_ret[daily_ret < mean]
-            # subtract returns below the mean from the mean, and square each of these differences, then get the average
-            semivariance = np.mean((mean - daily_ret_below_mean) ** 2)
-            return semivariance
 
         def _save_results() -> None:
             # SAVING MEMORIES TO CSV
@@ -407,8 +373,7 @@ class FinancialMarketEnv(gym.Env):
 
         def _terminate() -> list:
             self.final_state_counter += 1
-            self.memories["exercised_actions"].append(
-                [0] * self.assets_dim)  # because no actions exercised in this last date anymore
+            self.memories["exercised_actions"].append([0] * self.assets_dim)  # because no actions exercised in this last date anymore
             self.memories["transaction_cost"].append(0)  # since no transaction on this day, no transaction cost
             self.memories["sell_trades"].append(0)
             self.memories["buy_trades"].append(0)
@@ -416,47 +381,36 @@ class FinancialMarketEnv(gym.Env):
 
             if self.save_results == True:
                 _save_results()
-            sharpe_ratio = {}
-            if self.calculate_sharpe_ratio == True:  # todo: rm
-                sharpe_ratio = _get_sharpe_ratio()
-
-            return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, sharpe_ratio]
+            #if self.mode == "test":
+            #    print("current obs_test TERMINATE:")
+            #    print(self.state_flattened[:5])
+            return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, None]
 
         def _calculate_reward(end_portfolio_value: float = None, begin_portfolio_value: float = None):
             if self.reward_measure == "addPFVal":
                 self.reward = end_portfolio_value - begin_portfolio_value
                 # apply reward scaling to make rewards smaller
                 self.reward = self.reward * self.reward_scaling
-
-            elif self.reward_measure == "SR7":  # 7 day sharpe ratio (non-annualized) # todo: rm
-                if self.steps_counter >= self.performance_calculation_window - 1:
-                    self.reward = _get_sharpe_ratio(window=self.performance_calculation_window)
-                else:
-                    self.reward = np.log(end_portfolio_value / (
-                                begin_portfolio_value + 1e-00001))  # added very small number to prevent div. by 0
-
             elif self.reward_measure == "logU":
                 # log Utility(new F value / old PF value) as proposed by Neuneier 1997
                 self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
-
-            elif self.reward_measure == "semvarPenalty":
-                self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
-                if self.steps_counter >= self.performance_calculation_window - 1:
-                    semivar = _get_semivariance(window=self.performance_calculation_window)
-                    log_U = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
-                    self.reward = log_U - semivar
-                else:
-                    self.reward = np.log(end_portfolio_value / (begin_portfolio_value + 1e-00001))
             else:
                 print("ERROR, no valid reward specified.")
             return None
 
         def _take_step(actions: np.array) -> list:
+            """
+            This function is called below, if we are not yet at the end of the data set.
+            It implements the step the agent takes in the environment (portfolio rebalancing)
+            @param actions: actions from the policy net, but already clipped if necessary
+            @return: [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, {}]
+            """
             # we take a step in the environment, so we need to update the steps counter by 1 step
             self.steps_counter += 1
 
-            ### GET DATA FROM BEFORE TAKING A STEP, WE WILL NEED IT LATER TO CALCULATE STUFF
+            ### GET DATA FROM BEFORE TAKING A STEP, WE WILL NEED IT LATER FOR CALCULATIONS
             # we need the beginning values of cash, number of assets holdings these will change if we buy / sell stocks
+            # resp. the current portfolio weights, depending on which step version we use
             # we also need current asset prices (will change when new day is sampled)
             # and the current portfolio value (as a function of cash + asset_prices* n_asset_holdings)
             if self.step_version == "paper":
@@ -473,87 +427,47 @@ class FinancialMarketEnv(gym.Env):
             # asset pricing at the beginning of the day, before taking the action
             begin_asset_prices = self.data[self.price_colname].values.tolist()
             # portfolio value in the beginning, before taking the action
-            begin_portfolio_value = begin_cash_value + sum(
-                np.array(begin_asset_prices) * np.array(begin_n_asset_holdings))
+            begin_portfolio_value = begin_cash_value + sum(np.array(begin_asset_prices) * np.array(begin_n_asset_holdings))
 
             ################################################################################################
             ### TAKE A STEP,
             ### (WITHIN THE CURRENT STATE, BEFORE THE ENVIRONMENT SAMPLES A NEW STATE)
             ################################################################################################
-            # and we get the "indices" of at which position in the original actions array the sorted actions were
             if self.step_version == "paper":
-                # So the actions from the model come out in the range of, like, -2, ..., +2 plus/minus
-                # and then they are reshaped to the action space we have defined in the environment (reshaping is done in the ppo algorithm)
-                # so that there will be no out-of-bound errors
-                # and then here in this setup, the actions are multiplied by hmax, so that we get "number of stocks to buy or sell"
                 actions = actions * self.hmax_normalize
                 # this is the version from the ensemble paper.
                 # they take an actions vector where each element can be between -1 and 1, which represents the number of
                 # stocks to buy (since numbers are between -1 and 1, they will be multiplied in the buy and sell functions
                 # by HMAX_NORMALIZE (which is 100 by default), hence the number of stocks we can buy and sell each time is limited to max. 100 resp. -100,
-                # but in this version there also is no short-selling allowed.
-                # by this amount. When I run this method, it often leads to a problem:
-                # after a while, the cash is mostly distributed among stocks, and some stocks get expensive over time,
-                # while some others don't so much, and the agent has prblems rebalancing because not enough cash is freed up
-                # due to the nature of how actions are exercised. Another side effect is that
-                # in the beginning, not all money is distributed among stocks (because one can only buy at max. 100 stocks of each stock),
-                # so the entry into the market is more "careful"; basically, all the time, the nature of this rebalancing method
-                # acts lik a rebalancing constraint, but I am not sure if it acts in the way we would want.
-                # If, for example, one compares policy actions and exercised actions of later episodes of the test set,
-                # we see that lillte of the policy actions are actually exercised, which is bad; because the agent only gets feedback
-                # via reward, and the reward depends on: whether the weights the agent chose could be exercised, market conditions we could
-                # "foresee" in the data (=> things the agent could learn), market conditions we cannot foresee and that make our portfolio bad even
-                # though the agent did nothing wrong
-                # and while the last thing, we cannot reall ydo something about, it is always good to let the "information gap" between agent and what comes out
-                # of the action be as small as possible, hence the agent does not "know" how to attribute a reward (good weights, market luck, god weights but could not exercise)
 
                 # we sort the actions such that they are in this order [-large, ..., +large]
                 # then they sort into sell and buy actions
                 argsort_actions = np.argsort(actions)
-                # get assets to be sold (if action -)
+                # get assets to be sold (if action -), in the order [-large, ...-small]
                 sell_index = argsort_actions[:np.where(actions < 0)[0].shape[0]]
-                # get assets to be bought (if action +)
+                # get assets to be bought (if action +), in the order [+small, ...+large]
                 buy_index = argsort_actions[::-1][:np.where(actions > 0)[0].shape[0]]
                 # create empty list which will be filled with sell / buy actions for each asset
                 exercised_actions = [0] * self.assets_dim
 
                 # Note: this iterates index by index (stock by stock) and sells / buys stocks in consecutive order.
-                # for buy: can it happen that one stock uses up all ressources and the others then cannot be bought anymore, in the extreme case
+                # for buy: can it happen that one stock uses up all recources and the others then cannot be bought anymore, in the extreme case
                 # also, one cannot buy /sell more than 100 stocks at each time step and the cash for buying is also limited
                 for index in sell_index:  # index starting at 0
-                    exercised_actions = self._sell_stock(index, actions[index], exercised_actions)
+                    exercised_actions = self.sell_stock(index, actions[index], exercised_actions)
                 for index in buy_index:
-                    exercised_actions = self._buy_stock(index, actions[index], exercised_actions)
+                    exercised_actions = self.buy_stock(index, actions[index], exercised_actions)
 
             elif self.step_version == "newNoShort":
                 # in this version, actions represent target portfolio weights and need to be converted to actual "actions"
-                # no short selling allowed
-                # weights are received as a vector where values are in the interval [0,1] (softmax), and they sum up to one (L1 norm)
-                # this is done like this: 1. target weight is compared with current weight.
-                # delta_weight is calculated considering transaction cost (actual_w-target_w)*(1-transaction_cost)
-                # assumption / constraint: every buy / sell action must be self-financing
-                # that also means: if it is a sell action, we sell delta_weight, in order to free up money (we will then get sell_amount*(1-tc))
-                # if it is a buy action, we buy delta_weight(1-transaction_cost)
-                # in both cases we consider the constraint that we cannot sell / buy fractions of shares, and we cannot short-sell in this version,
-                # hence we can only:
-                # sell int(min(delta_weight*portfolio_value, number_assets_held_at_the_moment)) # note we round down, but could be done differently.
-                # but since we are going easier on selling (sell action not dependent on transaction cost), we will likely end up being able to do
-                # the whole sell action more often than to do the buy action, and then it is ok to round down the number of stocks to sell, if it is a float.
-                # we can only:
-                # buy int(delta_weight*portfolio_value*(1-transaction_cost)), so if we have int(5.6 stocks to buy) =>  stocks to buy,
-                # here the idea is that we only want to invest delta_weight*portfolio_value money in this stock, and with transaction cost,
-                # we end up getting only 5.6 stocks with that amount, so we take 5.
-                # again, this could be done differently, depends on what we want. But like this, we are sure to never run out of cash,
-                # and also, we have some spare cash freed uü in case we want to rebalance in the next period.
                 target_weights = actions
 
                 # rebalancing weight = new weights - current weights (weights taken as asset weights / all asset value, including cash,
                 # # because otherwise we would end up never buying anything (because initially, all stocks value = 0, cash value = pf value = 1000000)
-                # [-1]: we take the last list / array that was appended
+                # [-1]: we take the last list / array of current weights that was appended
                 # [:-1], we take all the stock weights except for the cash weight (which is at the end, as the key name indicates)
                 # delta_weight = new_weight (vector) - old_weights (vector)
                 delta_weight = target_weights - self.memories["all_weights_cashAtEnd"][-1][:-1]
-
                 # split weights into sell and buy actions (if -, sell; if +, buy)
                 argsort_delta_weight = np.argsort(delta_weight)
                 # get assets to be sold (if action -)
@@ -562,6 +476,7 @@ class FinancialMarketEnv(gym.Env):
                 buy_index = argsort_delta_weight[::-1][:np.where(delta_weight > 0)[0].shape[0]]
                 # create empty list which will be filled with sell / buy actions for each asset
                 exercised_actions = [0] * self.assets_dim
+
                 # max_cash available for buying; we will use this to adjust the buy-delta_weights
                 # in the buy action because sometimes, if we cannot sell the whole sell-amount, we don't free up
                 # enough cash and we might not have any spare cash so we cannot do the whole buy-action (invest the whole
@@ -587,8 +502,25 @@ class FinancialMarketEnv(gym.Env):
                 # delta_weight_to_buy_NEW = (free_cash_to_distribute_for_buying / max_cash_to_distribute_for_buying)
                 #                                 * delta_weight_to_buy
 
+                # example :, with transaction cost 0.01
+                #             Stock A    B    C    Cash      PFVALUE
+                # weight         0.5    0.3   0.2   0           1
+                # money          5.-    3.-   2.-   0          10.-
+                # target weight  0.4    0.5   0.1   0           1
+                # delta w       -0.1    +0.2  -0.1  0           0
+                # delta w money  -1.-   +2.-  -1.-  0           0
+
+                # let's say we could not sell fractional stocks, hence could not sell an A stock, only the C stock
+                # free cash expected for buying before sell actions = 1+1 = 2
+                # free cash actual for buying after sell action = 1
+                # cannot directly apply delta w for buying, must scale down, such that
+                # sum of all new delta w (for buying) = free money after selling = 1
+                # delta w new = delta w * new free cash / initially target cash = delta w * 1.-/2.- = 0.2 * 1/2 = 0.1
+                # this is 10% of total portfolio starting value of 10 = 1.- cash free for buy actions
+                # instead of the initially thought 2.-
+
                 for index in sell_index:  # index starting at 0
-                    exercised_actions = self._sell_stock(index, delta_weight[index], exercised_actions)
+                    exercised_actions = self.sell_stock(index, delta_weight[index], exercised_actions)
 
                 free_cash_to_distribute_for_buying_after_tc = self.memories["cash_value"][-1] * (
                             1 - self.transaction_fee_percent)
@@ -596,7 +528,7 @@ class FinancialMarketEnv(gym.Env):
                                         max_cash_to_distribute_for_buying_after_tc) / \
                                     max_cash_to_distribute_for_buying_after_tc) * delta_weight
                 for index in buy_index:
-                    exercised_actions = self._buy_stock(index, delta_weight_new[index], exercised_actions)
+                    exercised_actions = self.buy_stock(index, delta_weight_new[index], exercised_actions)
 
             elif self.step_version == "newNoShort2":
                 # in this version, we receive a vector of actions which include the cash weight at the first place
@@ -614,14 +546,14 @@ class FinancialMarketEnv(gym.Env):
                                                              * self.memories["portfolio_value"][-1] * \
                                                              (1 - self.transaction_fee_percent)
                 for index in sell_index:  # index starting at 0
-                    exercised_actions = self._sell_stock(index, delta_weight[index], exercised_actions)
+                    exercised_actions = self.sell_stock(index, delta_weight[index], exercised_actions)
                 free_cash_to_distribute_for_buying_after_tc = self.memories["cash_value"][-1] * (
                             1 - self.transaction_fee_percent)
                 delta_weight_new = (min(free_cash_to_distribute_for_buying_after_tc,
                                         max_cash_to_distribute_for_buying_after_tc) / \
                                     max_cash_to_distribute_for_buying_after_tc) * delta_weight
                 for index in buy_index:
-                    exercised_actions = self._buy_stock(index, delta_weight_new[index], exercised_actions)
+                    exercised_actions = self.buy_stock(index, delta_weight_new[index], exercised_actions)
 
             ### UPDATE VALUES AFTER ACTION TAKEN (WITHIN THE CURRENT STATE, BEFORE THE ENVIRONMENT SAMPLES A NEW STATE)
             # after we took an action, what changes immediately and independently of the next state we will get from
@@ -629,6 +561,7 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.current_cash_balance = self.state["cash"][0]
                 self.current_n_asset_holdings = list(self.state["n_asset_holdings"])
+
             elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.current_cash_balance = self.memories["cash_value"][-1]
                 self.current_n_asset_holdings = self.memories["number_asset_holdings"][
@@ -642,6 +575,7 @@ class FinancialMarketEnv(gym.Env):
             self.memories["transaction_cost"].append(self.cost)
             self.memories["number_asset_holdings"].append(self.current_n_asset_holdings)
             self.memories["cash_value"].append(self.current_cash_balance)
+
 
             ################################################
             ### ENVIRONMENT SAMPLES A NEW DAY, NEW STATE   #
@@ -680,11 +614,9 @@ class FinancialMarketEnv(gym.Env):
             elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.state = {"cash_w": [self.current_cash_weight],
                               "asset_w": self.current_all_weights_startofday[:-1]}
-
             # for each provided feature, append the feature value for the new day to the state dictionary
             for feature in self.features_list:
                 self.state.update({feature: self.data[feature].values.tolist()})
-
             for feature in self.single_features_list:
                 # for features which are not attached to a stock, like the vix (vixDiv100),
                 # we don't want them to appear n_asset times in the state
@@ -725,28 +657,24 @@ class FinancialMarketEnv(gym.Env):
             self.cost = 0
             self.sell_trades = 0
             self.buy_trades = 0
-
+            #if self.mode == "test":
+            #    print("current obs_test 1:")
+            #    print(self.state_flattened[:5])
             return [self.state_flattened, self.lstm_state_flattened, self.reward, self.terminal_state, {}]
 
         ####################################
         #    MAIN CODE FOR STEP FUNCTION   #
         ####################################
-        # actions are in this form: [[1,2,3,4..]], need to reshape to [1,2,3,4,...]
         actions = actions.flatten()
         # save policy actions (actions) to memories dict (these are the actions given by the agent, not th actual actions taken)
         self.memories["policy_actions"].append(actions)
-        # FIRST: CLIP / TRANSFORM ACTIONS to the range allowed by our objective /resp. the action space
-        # this needs to be done because actions are sampled from a Distribution (here: Gaussian,
-        # but could also use other, like e.g. Beta distribution), and that leads to actions not
-        # necessarily being within the boundaries of the defined action space (note: I am using gym.Box for action space)
-        # clipping is used by most implementations online, including stable baselines
+
         if self.step_version == "paper":
+            # actions are in this form: [[1,2,3,4..]], need to reshape to [1,2,3,4,...]
             # clip actions to be between action space limits (in paper [-1,1]
             actions = np.clip(actions, self.action_space.low, self.action_space.high)
         elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
-            # apply softmax again in sampled actions in order to make a vector of target weights
-            # which are all between [0,1] and sum up to one together.
-            # actions = nn.functional.softmax(torch.as_tensor(actions, dtype=torch.float), dim=0).numpy()
+            # actions are provided as weights, no need for clipping / transformation
             pass
 
         # save the clipped / transformed policy actions
@@ -757,7 +685,7 @@ class FinancialMarketEnv(gym.Env):
         # Note: there are many ways to define an end of the episode, like when a certain reward / penalty is reached,
         # or we could also define fixed intervals for eth episodes, like 30 days etc., but here it makes sense to treat this
         # as if the episode is as long as the training data available, because theoretically it is a continuous problem,
-        # where one invests over multiple years, theoretically "with no fixed end"
+        # where one invests over multiple years, theoretically "with no fixed end", so the word "episode" is not quite correct
         self.terminal_state = self.day >= self.df.index.unique()[-1]  # :bool
 
         ##### IF WE ARE IN THE TERMINAL STATE #####
@@ -769,8 +697,7 @@ class FinancialMarketEnv(gym.Env):
             # we take a step using the policy actions
             return _take_step(actions=actions)
 
-    def _sell_stock(self, index, action, exercised_actions) -> list:
-
+    def sell_stock(self, index, action, exercised_actions) -> list:
         def _sell_paper(index, action, exercised_actions) -> list:
             """
             If we hold assets, we can sell them based on our policy actions, but under short-selling constraints.
@@ -778,9 +705,13 @@ class FinancialMarketEnv(gym.Env):
             If we don't hold any assets, we pass, since we cannot short-sell.
             """
             # if we hold assets of the stock (given by the index), we can sell
+            #print(self.state["n_asset_holdings"])
+            #if self.mode == "test":
+            #    print("n_asset_holdings")
+            #    print(self.state["n_asset_holdings"][index])
             if self.state["n_asset_holdings"][index] > 0:
                 # Note: I have changed everywhere into round() because else actions (n.stocks to buy) would be floats!
-                # also: changed how state is constructed, using dict instead (not indizes)
+                # also: changed how state is constructed, using dict instead (not indices)
                 # based on short-selling constraints, get actually exercisable action based on policy action and current asset holdings
                 # there is a difference between policy actions (actions given by the policy) and actually doable actions
                 # we can sell the minimum between the number of stocks to sell given by the policy action,
@@ -788,6 +719,9 @@ class FinancialMarketEnv(gym.Env):
                 exercised_action = min(round(abs(action)), self.state["n_asset_holdings"][index])
                 exercised_actions[index] = -exercised_action
                 # update cash balance; cash new = cash old + price * n_assets sold*(1 - transaction cost)
+                #if self.mode == "test":
+                #    print("cash")
+                #    print(self.state["cash"][0])
                 self.state["cash"][0] += self.data[self.price_colname].values.tolist()[index] * \
                                          exercised_action * (1 - self.transaction_fee_percent)
                 self.state["n_asset_holdings"][index] -= exercised_action
@@ -834,7 +768,7 @@ class FinancialMarketEnv(gym.Env):
             exercised_actions = _sell_newNoShort(index, action, exercised_actions)
         return exercised_actions
 
-    def _buy_stock(self, index: int, action, exercised_actions) -> list:
+    def buy_stock(self, index: int, action, exercised_actions) -> list:
 
         def _buy_paper(index, action, exercised_actions) -> list:
             """
@@ -842,8 +776,13 @@ class FinancialMarketEnv(gym.Env):
             We cannot borrow in this setting, hence we can only buy as many assets as we can afford.
             We cannot buy fraction of assets in this setting.
             """
-            # max_n_assets_to_buy = cash balance / stock price, rounded to the floor (lowest integer)
-            max_n_assets_to_buy = self.state["cash"][0] // self.data[self.price_colname].values.tolist()[index]
+            # max_n_assets_to_buy = cash balance corrected for transaction fee) / stock price, rounded to the floor (lowest integer)
+            # Note in the version of the paper, they did not correct cash for transaction cost, which could in the extreme case lead
+            # to negative cash, which never happened in the experiments but I still changed it
+            #if self.mode == "test":
+            #    print("cash buy")
+            #    print(self.state["cash"][0])
+            max_n_assets_to_buy = self.state["cash"][0]*(1-self.transaction_fee_percent) // self.data[self.price_colname].values.tolist()[index]
             # using the policy actions and budget constraints, get the actually exercisable action
             exercised_action = min(max_n_assets_to_buy, round(action))
             exercised_actions[index] = exercised_action
@@ -851,6 +790,9 @@ class FinancialMarketEnv(gym.Env):
             self.state["cash"][0] -= self.data[self.price_colname].values.tolist()[index] * \
                                      exercised_action * (1 + self.transaction_fee_percent)
             # update asset holdings for the current asset: old holdings + action
+            #if self.mode == "test":
+            #    print("n_asset_holdings buy")
+            #    print(self.state["n_asset_holdings"][index])
             self.state["n_asset_holdings"][index] += exercised_action
             # update transaction cost counter: price * action * cost
             self.cost += self.data[self.price_colname].values.tolist()[index] * \
@@ -897,9 +839,8 @@ class FinancialMarketEnv(gym.Env):
 
     def reset(self, day: int = None, initial: str = "") -> np.array:
         """
-        Note: I included day and initial as paremeters here, which is not tootally in line with gym.Env,
-        (at least not intended by them), but I need it for having more control over the env during training
-        in my custom model
+        reset the environment to initial state.
+        If test set, and not first episode, we use previous state as initial state, if it is passed to the env in run_pipeline.py
         """
         # We reset the environment to the initial values
         # Reset counter goes up by 1 (because it counts how often we have reset our env since the moment we
@@ -953,6 +894,7 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.state = {"cash": [self.current_cash_balance],
                               "n_asset_holdings": self.current_n_asset_holdings}
+
             elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 self.state = {"cash_w": [self.current_cash_weight],
                               "asset_w": self.current_all_weights_startofday[:-1]}
@@ -969,7 +911,11 @@ class FinancialMarketEnv(gym.Env):
                 # if we are in the first iteration (=episode) and at the first step,
                 # we add feature names with a suffix to th state header from before
                 if self.iteration == 1 and self.steps_counter == 0:
-                    if feature not in self.lstm_features_list:
+                    if self.net_arch == "mlplstm_shared" or self.net_arch == "mlplstm_separate":
+                        if feature not in self.lstm_features_list:
+                            suffix = "_" + feature
+                            self.state_header += [s + suffix for s in self.asset_names]
+                    else:
                         suffix = "_" + feature
                         self.state_header += [s + suffix for s in self.asset_names]
 
@@ -978,7 +924,10 @@ class FinancialMarketEnv(gym.Env):
                 # we don't want them to appear n_asset times in the state
                 self.state.update({feature: [self.data[feature].values[0]]})
                 if self.iteration == 1 and self.steps_counter == 0:
-                    if feature not in self.lstm_features_list:
+                    if self.net_arch == "mlplstm_shared" or self.net_arch == "mlplstm_separate":
+                        if feature not in self.lstm_features_list:
+                            self.state_header += ["vixDiv100"]
+                    else:
                         self.state_header += ["vixDiv100"]
 
             self.lstm_state = dict((k, self.state[k]) for k in self.lstm_features_list if k in self.state)
@@ -1058,7 +1007,6 @@ class FinancialMarketEnv(gym.Env):
             if self.step_version == "paper":
                 self.state = {"cash": [self.current_cash_balance],
                               "n_asset_holdings": self.current_n_asset_holdings}
-
             elif self.step_version == "newNoShort" or self.step_version == "newNoShort2":
                 # here we already use cash weights, so no need for cash scaling
                 self.state = {"cash_w": [self.previous_state["cash_w"][0]],
@@ -1104,28 +1052,25 @@ class FinancialMarketEnv(gym.Env):
                              "sell_trades": [],
                              "buy_trades": [],
                              "state_memory": [self.state_flattened]}
-        # print(self.state.keys())
 
         return self.state_flattened, self.lstm_state_flattened
 
-    def return_reset_counter(self) -> int:
+    def return_reset_counter(self) -> int: # only for debugging
         return self.reset_counter
 
-    def return_steps_counter(self) -> int:
+    def return_steps_counter(self) -> int: # only for debugging
         return self.steps_counter
 
     def render(self, mode="human"):
         # here we return:
         # the state (flattened) as list / numpy array
         # the state as dictionary with the last portfolio value appended as well because if we use the custom version,
-        #   we need to pass the portfolio value as well because we don't store the cash value ans number of assets held
+        #   we need to pass the portfolio value as well because we don't store the cash value and number of assets held
         #   in the state vector and hence could not compute the portfolio value
         # the observed last asset prices list (for debug)
         # the reset counter (only needed for debug)
         # the final state counter (only needed for debug)
         # the steps counter (only needed for debug)
-        # print("last pf value (render):")
-        # print(self.memories["portfolio_value"][-1])
         self.state.update({"portfolio_value": [self.memories["portfolio_value"][-1]]})
 
         # if we use an lstm, we want to split the state vector into mlp and lstm features (we don't want to use the same features
@@ -1137,7 +1082,5 @@ class FinancialMarketEnv(gym.Env):
             except:
                 pass
 
-        # print("self.state (dict)")
-        # print(self.state)
         return self.state_flattened, self.lstm_state_flattened, self.state, self.observed_asset_prices_list, \
                self.reset_counter, self.final_state_counter, self.steps_counter
