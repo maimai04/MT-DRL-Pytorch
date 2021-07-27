@@ -175,7 +175,7 @@ class env_params:
         REWARD_SCALING = 1e-4  # This is 0.0001. It is the number the reward is multiplied with in order to make it smaller, as networks work better with numbers around 0
                                # instead with numbers in the thousands
         REBALANCE_PENALTY = 0  #0.2 # if 0, no penalty, if 1, so much penalty that no change in weight
-                               # todo: rm
+
     elif STEP_VERSION == "paper":
         HMAX_NORMALIZE = 100   # This is the max. number of stocks one is allowed to buy of each stock
         REWARD_SCALING = 1e-4  # This is 0.0001. It is the number the reward is multiplied with in order to make it smaller, as networks work better with numbers around 0
@@ -199,9 +199,6 @@ class agent_params:
         ### SETUP PARAMETERS
         # net architecture mode
 
-        #NET_ARCH = "mlp_separate" #
-        #NET_ARCH = "mlplstm_separate" # todo: rm
-
         NET_ARCH = "mlp_shared" # only feed-forward network, with fully shared layers between actor and critic
         #NET_ARCH = "mlplstm_shared" # feed-forward network + lstm, with fully shared layers between actor and critic
 
@@ -223,7 +220,7 @@ class agent_params:
         elif env_params.STEP_VERSION == "paper":
             # for version with Gaussian distribution, lower entropy works better, because the standard deviation already
             # gets large easily
-            ENTROPY_LOSS_COEF = 0.0001#0.005 #0.0001 #0.005 #0.01 #0.01
+            ENTROPY_LOSS_COEF = 0.005 #0.0001 #0.005 #0.01 #0.01
 
         # see: https://arxiv.org/abs/1711.02257
         # gradient normalization normalizes the gradient over all gradients together
@@ -231,7 +228,6 @@ class agent_params:
 
         ### LEARNING PARAMETERS
         TOTAL_EPISODES_TO_TRAIN_BASE = 50
-        #TOTAL_EPISODES_TO_TRAIN_CNT = 40#TOTAL_EPISODES_TO_TRAIN_BASE-10
 
         # prediction is deterministic, actions are not sampled. This is explained in the thesis
         PREDICT_DETERMINISTIC = True

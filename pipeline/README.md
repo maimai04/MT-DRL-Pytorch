@@ -15,7 +15,7 @@ setup_functions.py                : Called from run.py. Used to set up the run b
                                     later pass it to other functions that need this info (e.g. the environment)
 
 run_pipeline.py                   : Called from run.py. Runs the whole model setup 
-    run_expanding_window_setup()  : runs the whole pipeline for the expanding window cross validation,
+    run_rolling_window_setup()    : runs the whole pipeline for the rolling window cross validation,
                                     then does some backtesting,
                                     and creates plots for the most important results.
 
@@ -24,6 +24,3 @@ support_functions.py              : Called from run_pipeline.py.
                                     imports the models from model folder, if we are using the custom implementation,
                                     or imports the ppo agent from stable baselines 3.
 ```
-
-## Expanding window setup 
-# todo
