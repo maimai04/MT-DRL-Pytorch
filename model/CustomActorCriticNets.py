@@ -118,26 +118,13 @@ class FeatureExtractorNet(nn.Module):
         # => batch of 1
         # and we want to make it compatible with concatenation later with the lstm output, so we reshape it to [[features]] (shape = batch_size, n_features)
         if len(observations.shape) == 1 and self.net_arch in ["mlplstm_separate", "mlplstm_shared"]:
-            #print("observations in (FE): ")
-            #print(observations.shape)
             observations = observations.reshape(1, self.observations_size)
-            #print("observations out (FE): ")
-            #print(observations)
-            #print(observations.shape)
-            #print("lstm_observations in (FE):")
-            #print(lstm_observations.shape)
             # reshape the lstm input dimension_ must be 3D (batch_number=1, time steps per batch = 1, features_number)
             lstm_observations = lstm_observations.reshape(1, 1, self.lstm_observations_size)
-            #print("lstm_observations out (FE):")
-            #print(lstm_observations.shape)
 
         elif len(observations.shape) > 1 and self.net_arch in ["mlplstm_separate", "mlplstm_shared"]:
-            #print("lstm_observations in (FE):")
-            #print(lstm_observations.shape)
             # reshape the lstm input dimension_ must be 3D (batch_number=1, time steps per batch, features_number)
             lstm_observations = lstm_observations.reshape(1, len(observations), self.lstm_observations_size)
-            #print("lstm_observations out (FE):")
-            #print(lstm_observations.shape)
 
         # if we have only mlp, we use simply the mlp feature extractor (actually same as feature_extractor_mlp)
         if self.net_arch == "mlp_separate" or self.net_arch == "mlp_shared":
@@ -148,32 +135,17 @@ class FeatureExtractorNet(nn.Module):
             # observations for the lstm layer need to be of dim 3, even if it is just one observation for one forward pass
             # it must be (batchsize, timesteps, features). If we pass only ONE TIME STEP, shape must be: torch.Size([1, 1, lstm_observations_shape])
             # Note: lstm_states = (h, c) with h= hidden state, c = cell state
-            #if len(observations) ==64:
-                #print("lstm input dim:")
-                #print(lstm_observations.dim())
+
             mid_features_lstm, lstm_states = self.feature_extractor_lstm(input=lstm_observations, hx=lstm_states)
             # reshape the features received from the mlp feature extractor
             mid_features_mlp_reshaped = mid_features_mlp.reshape(len(observations),  self.mid_features_size)
-            #if len(observations) ==64:
-                #print("mid_features mlp reshaped: ")
-            #    print(mid_features_mlp_reshaped.shape)
-            #    print(mid_features_mlp_reshaped)
+
             # reshape the features received from the lstm feature extractor
             mid_features_lstm_reshaped = mid_features_lstm.reshape(len(observations),  self.lstm_hidden_size)
-            #if len(observations) ==64:
-                #print("mid_features lstm: ")
-                #print(mid_features_lstm.shape)
-                #print(mid_features_lstm)
-            #    print("mid_features lstm reshaped: ")
-            #    print(mid_features_lstm_reshaped.shape)
-                #print(mid_features_lstm_reshaped)
+
             # concatenate features on dim 1
             mid_features = torch.cat((mid_features_mlp_reshaped, mid_features_lstm_reshaped), dim=1)
-            #if len(observations) ==64:
-            #    print("mid_features combined: ")
-            #    print(mid_features.shape)
-                #print(mid_features)
-                #print(mid_features[0])
+
 
             # simple linear in order to bring together the two features down to a smaller size
             mid_features = self.summary_layer(mid_features)
